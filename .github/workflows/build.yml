@@ -1,6 +1,8 @@
 # Builds the firmware and runs the host tests on every push and pull
 # request. On a version tag it also attaches the AtomS3R images to the
 # GitHub release for that tag and publishes the browser flasher page.
+# Run by hand with a release tag to (re)publish the flasher page for an
+# existing release from its assets.
 name: build
 
 on:
@@ -9,6 +11,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Existing release tag (e.g. v1.2.0) to publish the web flasher for; leave empty to just build"
+        required: false
+        default: ""
 
 permissions:
   contents: write    # release assets
@@ -78,26 +85,48 @@ jobs:
   web-flasher:
     name: web flasher (GitHub Pages)
     needs: atoms3r
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release != '')
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+
+      - name: Images from this tag build
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/download-artifact@v4
         with:
           pattern: claude-monitor-atoms3r-*
           path: dist
           merge-multiple: true
+
+      - name: Images from the release ${{ inputs.release }}
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download "${{ inputs.release }}" --repo "${{ github.repository }}" --dir dist \
+            --pattern 'bootloader.bin' --pattern 'partition-table.bin' --pattern 'claude-monitor-atoms3r-*.bin'
+          ls -l dist
+
+      # Three parts at their offsets, not the merged image: the merged one
+      # pads the gap over the NVS partition with 0xFF and would wipe a
+      # stored calibration
       - name: Assemble the site
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.release }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          APP="$(cd dist && ls claude-monitor-atoms3r-*.bin | grep -v -- '-merged' | head -1)"
+          test -n "$APP"
           mkdir -p site
           cp docs/index.html site/
-          cp dist/*-merged.bin site/
-          IMAGE="$(basename dist/*-merged.bin)"
+          cp dist/bootloader.bin dist/partition-table.bin "dist/$APP" site/
           cat > site/manifest.json <<EOF
           {
             "name": "claude-monitor for the M5Stack AtomS3R",
@@ -106,13 +135,19 @@ jobs:
             "builds": [
               {
                 "chipFamily": "ESP32-S3",
-                "parts": [ { "path": "$IMAGE", "offset": 0 } ]
+                "parts": [
+                  { "path": "bootloader.bin",      "offset": 0 },
+                  { "path": "partition-table.bin", "offset": 32768 },
+                  { "path": "$APP",                "offset": 65536 }
+                ]
               }
             ]
           }
           EOF
           sed -i "s/__VERSION__/$VERSION/g" site/index.html
           ls -l site
+          cat site/manifest.json
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

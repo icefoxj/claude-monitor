@@ -13,7 +13,7 @@ Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub rel
 - `STATUS` reports `fw=` (app version), `board=`, the calibration in effect (`sign=`, `offset=`), the session codes, `link=`, `work=` (seconds of processing this turn) and `screen=`.
 - Daemon: `sessions <codes>` to the device, per-session project folder in `/status`, and dead-session detection: a `processing`/`compacting` session whose transcript has not changed for `-DeadSessionMinutes` (15) is dropped instead of lingering for four hours.
 - Host tests for `protocol.cpp` and `tilt.cpp` (`tests/host/`, plain C++17, `run.sh` / `run.ps1`).
-- CI (GitHub Actions): host tests and firmware build on every push; on a tag, the four images are attached to the release and the **web flasher** (ESP Web Tools on GitHub Pages, https://icefoxj.github.io/claude-monitor/) is published.
+- CI (GitHub Actions): host tests and firmware build on every push; on a tag, the four images are attached to the release and the **web flasher** (ESP Web Tools on GitHub Pages, https://icefoxj.github.io/claude-monitor/) is published. The flasher writes the three parts at their offsets, so a stored calibration survives an update; the merged image in the release erases the NVS partition (it pads the gap over it), which the README now says.
 
 ### Changed
 

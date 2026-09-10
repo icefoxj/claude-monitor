@@ -59,13 +59,15 @@ The daemon is optional: the hooks can also run a one-line script per event that 
 
 The quickest way is the **[web flasher](https://icefoxj.github.io/claude-monitor/)**, a page published from this repository that writes the latest release to the board through the browser's Web Serial (Chrome and Edge; Firefox and Safari have no Web Serial). Plug the AtomS3R in, click, pick the port. The conditions below apply there too: download mode on a board that was never flashed, and the daemon must release the port first.
 
-Without a browser, each [release](https://github.com/icefoxj/claude-monitor/releases) carries four files for the AtomS3R: `claude-monitor-atoms3r-vX.Y.Z-merged.bin`, a single image with bootloader, partition table and app that goes at offset `0x0`, and the three parts separately (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `claude-monitor-atoms3r-vX.Y.Z.bin` at `0x10000`) for anyone who prefers `idf.py`-style flashing. With `esptool` installed:
+Without a browser, each [release](https://github.com/icefoxj/claude-monitor/releases) carries four files for the AtomS3R: the three parts (`bootloader.bin` for `0x0`, `partition-table.bin` for `0x8000`, `claude-monitor-atoms3r-vX.Y.Z.bin` for `0x10000`) and `claude-monitor-atoms3r-vX.Y.Z-merged.bin`, a single image of all three for offset `0x0`. With `esptool` installed:
 
 ```
-python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 claude-monitor-atoms3r-vX.Y.Z-merged.bin
+python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 bootloader.bin 0x8000 partition-table.bin 0x10000 claude-monitor-atoms3r-vX.Y.Z.bin
 ```
 
-The port is `/dev/ttyACM0` on Linux and `/dev/cu.usbmodemXXXX` on macOS. On a board that has never been flashed, hold the side reset button ~2 s to enter download mode first. If the daemon is already running it owns the port: free it with `POST http://localhost:47831/release` (see [Build and flash](#build-and-flash)) and flash within two minutes. The boot log prints the version the image was built from (`App version: v1.1.0`), which is how you check what is on the cube.
+or the same command with `0x0 claude-monitor-atoms3r-vX.Y.Z-merged.bin` as the only file. The difference: the three parts leave the NVS partition alone, so a [calibration stored on the device](#calibrating-auto-rotation) survives; the merged image pads the gap between the partition table and the app with `0xFF` and wipes it (which is also the way to get a blank device).
+
+The port is `/dev/ttyACM0` on Linux and `/dev/cu.usbmodemXXXX` on macOS. On a board that has never been flashed, hold the side reset button ~2 s to enter download mode first. If the daemon is already running it owns the port: free it with `POST http://localhost:47831/release` (see [Build and flash](#build-and-flash)) and flash within two minutes. The boot log prints the version the image was built from (`App version: v1.2.0`), and `fw=` in the `STATUS` reply says the same, which is how you check what is on the cube.
 
 ## Build and flash
 
@@ -258,7 +260,7 @@ Invoke-RestMethod -Method Post 'http://localhost:47831/calibrate?rot=1&sign=-1&o
 Invoke-RestMethod -Method Post 'http://localhost:47831/calibrate?reset=1'                   # back to the compiled defaults
 ```
 
-Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over the port. The device applies the values at once, stores them in flash (NVS, so they survive reboots and reflashing the app), and answers with its `STATUS` line, where `rot=`, `sign=` and `offset=` show what is in effect. To check, stand the cube on a side, read `angle=` from `http://localhost:47831/serial/status` and compare it with what looks upright. The angle is held while the cube lies flat (`|az| > 0.80 g`) or the tilt is too small to be reliable (in-plane component below 0.40 g), so a cube resting on a desk never twitches.
+Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over the port. The device applies the values at once, stores them in flash (the NVS partition, so they survive reboots and any flash that writes the three parts at their offsets: `idf.py flash`, the web flasher, esptool with three files; the merged image erases them), and answers with its `STATUS` line, where `rot=`, `sign=` and `offset=` show what is in effect. The boot log says which set is in use: `(from nvs)` or `(compiled)`. To check, stand the cube on a side, read `angle=` from `http://localhost:47831/serial/status` and compare it with what looks upright. The angle is held while the cube lies flat (`|az| > 0.80 g`) or the tilt is too small to be reliable (in-plane component below 0.40 g), so a cube resting on a desk never twitches.
 
 ## Project layout
 
@@ -300,7 +302,7 @@ Everything is drawn into an in-RAM canvas (`M5Canvas`, 32 KB on the AtomS3R) and
 
 The board-independent code with no display dependency (`protocol.cpp`, `tilt.cpp`) has host tests in `tests/host/`: plain C++17, no framework. `tests/host/run.sh` builds and runs them on Linux/macOS with any `g++` or `clang++`; `tests/host/run.ps1` does it on Windows with MSVC (found through `vswhere`) or a C++17 `g++`. They cover the line parser, every protocol word, the `calibrate` syntax and the tilt filter, including its wrap-around. The icons and the state machine need an `M5Canvas`, so they are checked on the hardware.
 
-GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds the AtomS3R firmware with ESP-IDF 5.5 on every push and pull request, keeping the four images as a workflow artifact. On a version tag it also attaches them to the GitHub release for that tag and publishes the web flasher page with the merged image and its ESP Web Tools manifest.
+GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds the AtomS3R firmware with ESP-IDF 5.5 on every push and pull request, keeping the four images as a workflow artifact. On a version tag it also attaches them to the GitHub release for that tag and publishes the web flasher page with the three parts and their ESP Web Tools manifest. The workflow can also be run by hand with a release tag to republish the flasher page from that release's assets.
 
 ## Known limitations
 
