@@ -15,7 +15,8 @@
 
 // Serial protocol: one command per line, terminated by \n
 //   "processing"   -> spinning yellow gear (Claude processing)
-//   "waiting_user" -> red sign with an exclamation mark (waiting for the user)
+//   "waiting_user" -> red sign with an exclamation mark (waiting for a permission)
+//   "question"     -> blue sign with a question mark (Claude asked you something)
 //   "idle"         -> green circle with check (idle)
 //   "off"          -> screen off
 //   "status"       -> device replies with one STATUS line (debug/calibration)
@@ -33,11 +34,22 @@ namespace{
     }
     constexpr uint16_t kColorBg = rgb565(0,0,0);
     constexpr uint16_t kColorRed = rgb565(210,35,35);
+    constexpr uint16_t kColorBlue = rgb565(35,120,225);
     constexpr uint16_t kColorYellow = rgb565(255,200,0);
     constexpr uint16_t kColorGreen = rgb565(60,180,75);
     constexpr uint16_t kColorWhite = rgb565(255,255,255);
 
-    enum class State {Idle, Processing, WaitingUser, Off};
+    enum class State {Idle, Processing, WaitingUser, Question, Off};
+
+    // States that mean "Claude needs you": they get an entry pulse
+    bool needsAttention(State s){
+        return s == State::WaitingUser || s == State::Question;
+    }
+
+    // States drawn once and then only redrawn when the tilt changes
+    bool isStatic(State s){
+        return s == State::Idle || s == State::WaitingUser || s == State::Question;
+    }
 
     // Framebuffer: every frame is composed here and pushed in one go
     M5Canvas canvas(&M5.Display);
@@ -48,9 +60,11 @@ namespace{
 
     struct Pt { float x; float y; };
 
-    // A point given relative to the canvas centre, rotated by `angle`
-    // radians (clockwise on screen) and translated to canvas coordinates
-    Pt rotated(float x, float y, float angle){
+    // A point given relative to the canvas centre, scaled, rotated by
+    // `angle` radians (clockwise on screen) and translated to canvas coordinates
+    Pt rotated(float x, float y, float angle, float scale = 1.0f){
+        x *= scale;
+        y *= scale;
         float c = cosf(angle);
         float s = sinf(angle);
         return { kCx + x * c - y * s, kCy + x * s + y * c };
@@ -74,6 +88,22 @@ namespace{
         canvas.fillCircle(px(b.x), px(b.y), px(thickness * 0.5f), color);
     }
 
+    // Thick arc as a polyline of round-capped segments. Centre and radius
+    // are relative to the canvas centre; angles in screen degrees
+    // (0 = right, 90 = down, i.e. clockwise), before the icon rotation
+    void thickArc(float cx, float cy, float r, float a0, float a1,
+                  float thickness, uint16_t color, float angle, float scale){
+        const int steps = 16;
+        float t0 = a0 * kPi / 180.0f;
+        Pt prev = rotated(cx + r * cosf(t0), cy + r * sinf(t0), angle, scale);
+        for (int i = 1; i <= steps; i++){
+            float t = (a0 + (a1 - a0) * i / steps) * kPi / 180.0f;
+            Pt next = rotated(cx + r * cosf(t), cy + r * sinf(t), angle, scale);
+            thickLine(prev, next, thickness * scale, color);
+            prev = next;
+        }
+    }
+
     // Filled regular octagon centred on the canvas. At angle 0 the flat
     // sides sit at the top and bottom, like a road sign; `angle` rotates it
     void octagon(float radius, float angle, uint16_t color){
@@ -88,20 +118,37 @@ namespace{
     }
 
     // ---------------- icons ----------------
-    // The idle and waiting icons take `angle`, the clockwise rotation that
-    // keeps them upright for the current tilt of the cube. The gear spins
-    // on its own and ignores the tilt.
+    // The static icons take `angle`, the clockwise rotation that keeps them
+    // upright for the current tilt of the cube. The two "needs you" signs
+    // also take `scale`, used by the entry pulse. The gear spins on its own
+    // and ignores the tilt.
 
-    void drawWaitingIcon(float angle){
+    // Road sign: white border, coloured body
+    void sign(uint16_t body, float angle, float scale){
         canvas.fillSprite(kColorBg);
+        octagon(58 * scale, angle, kColorWhite);
+        octagon(51 * scale, angle, body);
+    }
 
-        octagon(58, angle, kColorWhite);   // white border
-        octagon(51, angle, kColorRed);     // red body
+    void drawWaitingIcon(float angle, float scale){
+        sign(kColorRed, angle, scale);
 
         // Exclamation mark: a pill-shaped bar and a dot
-        thickLine(rotated(0, -28, angle), rotated(0, 6, angle), 13, kColorWhite);
-        Pt dot = rotated(0, 26, angle);
-        canvas.fillCircle(px(dot.x), px(dot.y), 7, kColorWhite);
+        thickLine(rotated(0, -28, angle, scale), rotated(0, 6, angle, scale), 13 * scale, kColorWhite);
+        Pt dot = rotated(0, 26, angle, scale);
+        canvas.fillCircle(px(dot.x), px(dot.y), px(7 * scale), kColorWhite);
+
+        canvas.pushSprite(0,0);
+    }
+
+    void drawQuestionIcon(float angle, float scale){
+        sign(kColorBlue, angle, scale);
+
+        // Question mark: a 260-degree hook, a short stem and a dot
+        thickArc(0, -14, 16, 190, 450, 12, kColorWhite, angle, scale);
+        thickLine(rotated(0, 2, angle, scale), rotated(0, 8, angle, scale), 12 * scale, kColorWhite);
+        Pt dot = rotated(0, 27, angle, scale);
+        canvas.fillCircle(px(dot.x), px(dot.y), px(7 * scale), kColorWhite);
 
         canvas.pushSprite(0,0);
     }
@@ -204,20 +251,39 @@ namespace{
         return fabsf(wrapAngle(t.angle - t.drawn)) >= kRedrawStep;
     }
 
+    // ---------------- attention pulse ----------------
+    // When a "needs you" sign appears it breathes three times over ~2 s so
+    // the change catches the eye from across the desk
+
+    constexpr int   kAttentionFrames = 60;    // total length at ~30 fps
+    constexpr int   kAttentionPeriod = 20;    // frames per pulse
+    constexpr float kAttentionAmp    = 0.10f; // +10 % size at the peak
+
     // ---------------- state machine ----------------
 
-    void renderState(State state, float gearAngle, Tilt& tilt){
-        switch(state){
+    struct Ui {
+        State state     = State::Off;
+        float gearAngle = 0.0f;
+        Tilt  tilt;
+        int   attention = 0;   // pulse frames left, 0 = idle
+    };
+
+    void renderState(Ui& ui, float scale = 1.0f){
+        switch(ui.state){
             case State::Processing:
-                drawGearIcon(gearAngle);
+                drawGearIcon(ui.gearAngle);
                 break;
             case State::WaitingUser:
-                drawWaitingIcon(tilt.angle);
-                tilt.drawn = tilt.angle;
+                drawWaitingIcon(ui.tilt.angle, scale);
+                ui.tilt.drawn = ui.tilt.angle;
+                break;
+            case State::Question:
+                drawQuestionIcon(ui.tilt.angle, scale);
+                ui.tilt.drawn = ui.tilt.angle;
                 break;
             case State::Idle:
-                drawDoneIcon(tilt.angle);
-                tilt.drawn = tilt.angle;
+                drawDoneIcon(ui.tilt.angle);
+                ui.tilt.drawn = ui.tilt.angle;
                 break;
             case State::Off:
                 drawBlankScreen();
@@ -225,26 +291,29 @@ namespace{
         }
     }
 
-    void applyState(State next, State& current, float& gearAngle, Tilt& tilt){
-        if (next == current){
+    void applyState(State next, Ui& ui){
+        if (next == ui.state){
             return;   // avoids needless redraws of the static icons
         }
-        current = next;
+        ui.state = next;
         if (next == State::Processing){
-            gearAngle = 0.0f;
+            ui.gearAngle = 0.0f;
         }
-        renderState(current, gearAngle, tilt);
+        ui.attention = needsAttention(next) ? kAttentionFrames : 0;
+        renderState(ui);
     }
 
-    void handleCommand(const std::string& cmd, State& state, float& gearAngle, Tilt& tilt){
+    void handleCommand(const std::string& cmd, Ui& ui){
         if (cmd == "processing"){
-            applyState(State::Processing, state, gearAngle, tilt);
+            applyState(State::Processing, ui);
         } else if (cmd == "waiting_user"){
-            applyState(State::WaitingUser, state, gearAngle, tilt);
+            applyState(State::WaitingUser, ui);
+        } else if (cmd == "question"){
+            applyState(State::Question, ui);
         } else if (cmd == "idle"){
-            applyState(State::Idle, state, gearAngle, tilt);
+            applyState(State::Idle, ui);
         } else if (cmd == "off"){
-            applyState(State::Off, state, gearAngle, tilt);
+            applyState(State::Off, ui);
         }
         // Unknown command: silently ignore
     }
@@ -253,6 +322,7 @@ namespace{
         switch(s){
             case State::Processing:  return "processing";
             case State::WaitingUser: return "waiting_user";
+            case State::Question:    return "question";
             case State::Idle:        return "idle";
             case State::Off:         return "off";
         }
@@ -261,11 +331,11 @@ namespace{
 
     // Reply to the "status" command straight through the USB driver, so it
     // works regardless of where the ESP-IDF console is routed
-    void sendStatus(State state, uint8_t rotation, const Tilt& tilt, float ax, float ay, float az){
+    void sendStatus(const Ui& ui, uint8_t rotation, float ax, float ay, float az){
         char msg[112];
         int n = snprintf(msg, sizeof(msg),
                          "STATUS state=%s rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f\n",
-                         stateName(state), rotation, tilt.angle * 180.0f / kPi, ax, ay, az);
+                         stateName(ui.state), rotation, ui.tilt.angle * 180.0f / kPi, ax, ay, az);
         if (n > 0){
             usb_serial_jtag_write_bytes(msg, n, pdMS_TO_TICKS(20));
         }
@@ -287,18 +357,16 @@ extern "C" void app_main(void){
     M5.Display.setRotation(rotation);
     ESP_LOGI(TAG, "imu %s, boot rotation %u", imuOK ? "enabled" : "absent", rotation);
 
-    Tilt tilt;
+    Ui ui;
     float ax = 0.0f, ay = 0.0f, az = 0.0f;
     if (imuOK){
         // Prime the tilt so the first frame is already upright
         M5.Imu.update();
         M5.Imu.getAccel(&ax,&ay,&az);
-        updateTilt(tilt, ax, ay, az);
+        updateTilt(ui.tilt, ax, ay, az);
     }
 
-    State state = State::Off;
-    float gearAngle = 0.0f;
-    applyState(State::Idle, state, gearAngle, tilt);   // initial state
+    applyState(State::Idle, ui);   // initial state
 
     // USB Serial/JTAG driver, to receive data from the computer
     usb_serial_jtag_driver_config_t usbCfg = {
@@ -315,17 +383,18 @@ extern "C" void app_main(void){
         M5.update();   // refreshes the button state
 
         // Tilt tracking: the static icons follow the gravity vector
+        // (while a pulse is running it redraws every frame anyway)
         if (imuOK){
             M5.Imu.update();
             M5.Imu.getAccel(&ax,&ay,&az);
-            bool stale = updateTilt(tilt, ax, ay, az);
-            if (stale && (state == State::Idle || state == State::WaitingUser)){
-                renderState(state, gearAngle, tilt);
+            bool stale = updateTilt(ui.tilt, ax, ay, az);
+            if (stale && ui.attention == 0 && isStatic(ui.state)){
+                renderState(ui);
             }
         }
 
         // The 33 ms timeout blocks waiting for data (no busy-wait) and sets
-        // the ~30 fps pace of the animation and the tilt filter
+        // the ~30 fps pace of the animations and the tilt filter
         int bytesRead = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(33));
 
         for (int i = 0; i < bytesRead; i++){
@@ -336,9 +405,9 @@ extern "C" void app_main(void){
                     line.pop_back();
                 }
                 if (line == "status"){
-                    sendStatus(state, rotation, tilt, ax, ay, az);
+                    sendStatus(ui, rotation, ax, ay, az);
                 } else {
-                    handleCommand(line, state, gearAngle, tilt);
+                    handleCommand(line, ui);
                 }
                 line.clear();
             } else {
@@ -350,12 +419,26 @@ extern "C" void app_main(void){
         }
 
         // Animation: only the "processing" state redraws every frame
-        if (state == State::Processing && screenOn){
-            gearAngle += 0.10f;   // ~3 s per full turn at 30 fps
-            if (gearAngle >= 2.0f * kPi){
-                gearAngle -= 2.0f * kPi;
+        if (ui.state == State::Processing && screenOn){
+            ui.gearAngle += 0.10f;   // ~3 s per full turn at 30 fps
+            if (ui.gearAngle >= 2.0f * kPi){
+                ui.gearAngle -= 2.0f * kPi;
             }
-            drawGearIcon(gearAngle);
+            drawGearIcon(ui.gearAngle);
+        }
+
+        // Entry pulse of the "needs you" signs: the last frame lands on scale 1
+        if (ui.attention > 0){
+            if (screenOn){
+                int k = kAttentionFrames - ui.attention + 1;   // 1..kAttentionFrames
+                --ui.attention;
+                float scale = (ui.attention == 0)
+                    ? 1.0f
+                    : 1.0f + kAttentionAmp * fabsf(sinf(kPi * k / kAttentionPeriod));
+                renderState(ui, scale);
+            } else {
+                ui.attention = 0;   // screen is dark: nothing to animate
+            }
         }
 
         // Screen button: toggles the display on and off
