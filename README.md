@@ -36,7 +36,7 @@ The Anthropic API does not expose session state, so the device cannot poll. Inst
 └──────────────┘                      └──────────────┘                  └──────────────┘
 ```
 
-Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat: the daemon sends one every 30 s, and once the device has seen a ping, a minute of silence means the host is gone. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. And `status`, which makes the device answer with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=… fw=… board=… sign=… offset=… sessions=… link=… work=… screen=…`) and exists for calibration and debugging.
+Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat: the daemon sends one every 30 s, and once the device has seen a ping, a minute of silence means the host is gone. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Two words make the device talk back: `status` answers with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=… fw=… board=… sign=… offset=… sessions=… link=… work=… screen=…`) for calibration and debugging, and `version` answers with one `VERSION` line that identifies the hardware and the firmware: the board the firmware was built for, the model M5Unified detected, chip and revision, flash size, firmware version, ESP-IDF and M5Unified versions, protocol version, build time, ELF SHA prefix, uptime and the reason for the last reset.
 
 The daemon is optional: the hooks can also run a one-line script per event that writes to the port directly (see [Without the daemon](#without-the-daemon)). The daemon is better in every way that matters: no process start-up per event, a single writer on the port, events delivered in order, a log with timestamps, and per-session tracking.
 
@@ -67,7 +67,15 @@ python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --afte
 
 or the same command with `0x0 claude-monitor-atoms3r-vX.Y.Z-merged.bin` as the only file. The difference: the three parts leave the NVS partition alone, so a [calibration stored on the device](#calibrating-auto-rotation) survives; the merged image pads the gap between the partition table and the app with `0xFF` and wipes it (which is also the way to get a blank device).
 
-The port is `/dev/ttyACM0` on Linux and `/dev/cu.usbmodemXXXX` on macOS. On a board that has never been flashed, hold the side reset button ~2 s to enter download mode first. If the daemon is already running it owns the port: free it with `POST http://localhost:47831/release` (see [Build and flash](#build-and-flash)) and flash within two minutes. The boot log prints the version the image was built from (`App version: v1.2.0`), and `fw=` in the `STATUS` reply says the same, which is how you check what is on the cube.
+The port is `/dev/ttyACM0` on Linux and `/dev/cu.usbmodemXXXX` on macOS. On a board that has never been flashed, hold the side reset button ~2 s to enter download mode first. If the daemon is already running it owns the port: free it with `POST http://localhost:47831/release` (see [Build and flash](#build-and-flash)) and flash within two minutes.
+
+To check what is on the cube, send `version` over the port, or `GET http://localhost:47831/version` with the daemon running:
+
+```
+VERSION board=atoms3r model=M5Stack-AtomS3R chip=esp32s3 rev=v0.2 cores=2 flash=8MB fw=v1.2.0 idf=v5.5 m5unified=0.2.21 protocol=2 project=claude-monitor-atoms3r built=2026-09-10T20:15:42 sha=a66e423b uptime=418 reset=poweron
+```
+
+`board` is what the firmware was built for and `model` what M5Unified detected at boot, so the two disagree when an image runs on the wrong module. `fw` is the git tag the build came from (`-N-gHASH` after it means N commits past the tag, `-dirty` an uncommitted tree). The device also sends this line once, unasked, when it boots, so the daemon log records every reboot with its version.
 
 ## Build and flash
 
@@ -129,6 +137,8 @@ echo off          > /dev/ttyACM0      # screen off
 
 The script uses .NET's `SerialPort`, pins DTR/RTS low so the board never resets, retries a busy port a few times, and always exits 0. If nothing happens, something else (usually the monitor) has the port open.
 
+`status` and `version` answer with a line. On Linux/macOS read it with `cat /dev/ttyACM0` in a second terminal before sending the word; on Windows use the daemon (`GET /serial/status`, `GET /version`) or any serial terminal at 115200 baud with DTR and RTS off.
+
 ## The host daemon
 
 `host/Monitor-Daemon.ps1` is a PowerShell 7 script that keeps the port open and listens on `http://localhost:47831/`. Install it as a scheduled task that starts hidden at logon (and starts it right away):
@@ -148,7 +158,8 @@ Endpoints, all on `http://localhost:47831/`:
 | Route | Use |
 |---|---|
 | `POST /hook` | what the hooks call; body is Claude Code's hook JSON |
-| `GET /status` | daemon state, sessions (state, project folder, last event), what the device was last told |
+| `GET /status` | daemon state, sessions (state, project folder, last event), what the device was last told, the device's `VERSION` fields read when the port was opened |
+| `GET /version` | asks the device for its `VERSION` line and returns it raw and parsed, plus the daemon's script path and start time |
 | `GET /serial/status` | asks the device for its `STATUS` line and returns it |
 | `POST /state/<state>` | writes one state to the device (what `Send-ClaudeState.ps1` uses) |
 | `POST /calibrate?rot=1&sign=-1&offset=0` | stores the orientation calibration on the device (any subset) and returns its `STATUS`; `?reset=1` restores the compiled defaults |

@@ -2,6 +2,13 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt AtomS3R images. Dates are release dates.
 
+## Unreleased
+
+### Added
+
+- `version` command: the device answers with one `VERSION` line identifying the hardware and the firmware (board the image was built for, model M5Unified detected, chip and revision, cores, flash size, firmware version, ESP-IDF and M5Unified versions, protocol version, project, build time, ELF SHA prefix, uptime, last reset reason). The device also sends the line once at boot, as soon as its USB driver is up. `kProtocolVersion` (2) in `protocol.h`.
+- Daemon: reads the `VERSION` line whenever it opens the port and keeps it in `GET /status` (`device_info`); `GET /version` asks the device again and returns the fields parsed.
+
 ## 1.2.0 — 2026-09-10
 
 ### Added

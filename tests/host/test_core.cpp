@@ -110,6 +110,9 @@ void testStates(){
 
 void testParseCommand(){
     CHECK(parseCommand("status").kind == Command::Status);
+    CHECK(parseCommand("version").kind == Command::Version);
+    CHECK(parseCommand("version").arg == "");
+    CHECK(kProtocolVersion == 2);
     CHECK(parseCommand("ping").kind == Command::Ping);
     CHECK(parseCommand("subagent_start").kind == Command::SubagentStart);
     CHECK(parseCommand("subagent_stop").kind == Command::SubagentStop);

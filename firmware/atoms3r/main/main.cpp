@@ -29,6 +29,7 @@
 #include "monitor/protocol.h"
 #include "monitor/tilt.h"
 #include "monitor/ui.h"
+#include "monitor/version.h"
 
 namespace {
 
@@ -121,6 +122,17 @@ void writeLine(const char* msg, int n){
     }
 }
 
+// Reply to "version": hardware and firmware identification
+void sendVersion(){
+    char msg[256];
+    int n = monitor::formatVersionLine(msg, sizeof(msg) - 1, kBoard);
+    if (n > static_cast<int>(sizeof(msg)) - 2){
+        n = sizeof(msg) - 2;   // truncated: still terminate the line
+    }
+    msg[n++] = '\n';
+    writeLine(msg, n);
+}
+
 const char* screenName(uint8_t brightness){
     if (brightness == 0) return "off";
     if (brightness == kDimBrightness) return "dim";
@@ -201,6 +213,11 @@ extern "C" void app_main(void){
     };
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usbCfg));
 
+    // Announce who we are once, through the driver: the console's USB
+    // channel drops long lines when the host is not draining it, this path
+    // does not, and the daemon logs every reboot with its version
+    sendVersion();
+
     monitor::LineParser parser;
     std::string line;
     uint8_t buf[64];
@@ -226,7 +243,7 @@ extern "C" void app_main(void){
                 continue;
             }
             auto cmd = monitor::parseCommand(line);
-            if (cmd.kind != monitor::Command::Status){
+            if (cmd.kind != monitor::Command::Status && cmd.kind != monitor::Command::Version){
                 ui.noteCommand();   // a query is not a sign of life from the state feed
             }
             switch (cmd.kind){
@@ -240,6 +257,7 @@ extern "C" void app_main(void){
                 case monitor::Command::Sessions:      ui.setSessions(cmd.arg); break;
                 case monitor::Command::Ping:          ui.ping(); break;
                 case monitor::Command::Status:        sendStatus(ui, cal, brightness, ax, ay, az); break;
+                case monitor::Command::Version:       sendVersion(); break;
                 case monitor::Command::Calibrate: {
                     monitor::CalibrationRequest req;
                     if (!monitor::parseCalibration(cmd.arg, req)){

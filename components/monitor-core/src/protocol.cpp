@@ -62,6 +62,10 @@ ParsedCommand parseCommand(std::string_view line){
         cmd.kind = Command::Status;
         return cmd;
     }
+    if (word == "version"){
+        cmd.kind = Command::Version;
+        return cmd;
+    }
     if (word == "ping"){
         cmd.kind = Command::Ping;
         return cmd;

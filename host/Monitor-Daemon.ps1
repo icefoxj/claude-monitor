@@ -23,7 +23,8 @@
     Endpoints (all on http://localhost:<HttpPort>/):
       POST /hook            Claude Code hook input JSON (any event)
       POST /state/<state>   write one state straight to the device (tests)
-      GET  /serial/<cmd>    write any protocol word; for "status" returns the reply
+      GET  /serial/<cmd>    write any protocol word; for "status" / "version" returns the reply
+      GET  /version         ask the device who it is: board, model, chip, firmware, ESP-IDF, build, uptime, last reset
       POST /calibrate?rot=<0-3>&sign=<1|-1>&offset=<deg>   store the orientation on the device; ?reset=1 clears it
       GET  /status          daemon state, sessions, device state
       POST /release[?seconds=120]   close the port so idf.py can flash; reopens after the delay
@@ -73,6 +74,8 @@ $script:deviceState     = $null   # last state written to the device
 $script:deviceSubagents = 0       # subagent count the device currently holds
 $script:deviceSessions  = $null   # session codes the device currently shows
 $script:lastPing        = [datetime]::MinValue
+$script:deviceInfo      = $null   # fields of the device's VERSION line, read when the port opens
+$script:started         = Get-Date
 
 function Open-Serial {
     try {
@@ -124,11 +127,18 @@ function Read-SerialLines {
     return @()
 }
 
-# Writes a protocol line; for "status" and "calibrate" waits briefly for the
-# device's reply (a STATUS line, or ERROR for a rejected calibration)
+# Writes a protocol line; for "status", "version" and "calibrate" waits
+# briefly for the device's reply (a STATUS or VERSION line, or ERROR for a
+# rejected calibration)
 function Send-SerialCommand([string]$cmd) {
+    $expect = switch -Wildcard ($cmd) {
+        'status'     { 'STATUS' }
+        'version'    { 'VERSION' }
+        'calibrate*' { 'STATUS|ERROR' }
+        default      { $null }
+    }
     if (-not (Send-Serial $cmd)) { return $null }
-    if ($cmd -ne 'status' -and $cmd -notlike 'calibrate*') { return $null }
+    if (-not $expect) { return $null }
     $deadline = (Get-Date).AddSeconds(1.5)
     $buf = ''
     while ((Get-Date) -lt $deadline) {
@@ -136,9 +146,32 @@ function Send-SerialCommand([string]$cmd) {
         try {
             if ($script:serial -and $script:serial.BytesToRead -gt 0) { $buf += $script:serial.ReadExisting() }
         } catch {}
-        if ($buf -match '(STATUS|ERROR)[^\r\n]*') { return $Matches[0] }
+        if ($buf -match "($expect)[^\r\n]*") { return $Matches[0] }
     }
     return $null
+}
+
+# "VERSION board=atoms3r fw=v1.2.0 ..." -> ordered hashtable of its fields
+function ConvertFrom-KvLine([string]$line) {
+    $fields = [ordered]@{}
+    foreach ($tok in ($line -split ' ') | Select-Object -Skip 1) {
+        $i = $tok.IndexOf('=')
+        if ($i -gt 0) { $fields[$tok.Substring(0, $i)] = $tok.Substring($i + 1) }
+    }
+    return $fields
+}
+
+# Asks the device who it is; keeps the answer for /status and logs it
+function Read-DeviceInfo {
+    $reply = Send-SerialCommand 'version'
+    if ($reply -and $reply -like 'VERSION *') {
+        $script:deviceInfo = ConvertFrom-KvLine $reply
+        Log "device: $reply"
+    } else {
+        $script:deviceInfo = $null
+        Log "device: no VERSION reply (firmware older than 1.3?)"
+    }
+    return $reply
 }
 
 # ---------------- sessions ----------------
@@ -354,6 +387,17 @@ function Handle-Request($ctx) {
         Send-Response $ctx 200 (@{ sent = $c; reply = $reply } | ConvertTo-Json -Compress)
         return
     }
+    if ($path -eq '/version') {
+        $reply = Read-DeviceInfo
+        $obj = [ordered]@{
+            port   = $PortName
+            reply  = $reply
+            device = $script:deviceInfo
+            daemon = [ordered]@{ script = $PSCommandPath; started = $script:started.ToString('s'); pwsh = $PSVersionTable.PSVersion.ToString() }
+        }
+        Send-Response $ctx 200 ($obj | ConvertTo-Json -Depth 4)
+        return
+    }
     if ($path -eq '/calibrate') {
         $q = $req.QueryString
         $fields = @()
@@ -387,6 +431,8 @@ function Handle-Request($ctx) {
             port             = $PortName
             serial_open      = [bool]$script:serial
             released_until   = $(if ($script:releaseUntil -gt (Get-Date)) { $script:releaseUntil.ToString('s') } else { $null })
+            started          = $script:started.ToString('s')
+            device_info      = $script:deviceInfo
             device_state     = $script:deviceState
             device_subagents = $script:deviceSubagents
             device_sessions  = $script:deviceSessions
@@ -443,6 +489,7 @@ try {
                 $script:deviceState = $null
                 $script:deviceSubagents = 0
                 $script:deviceSessions = $null
+                Read-DeviceInfo | Out-Null
                 Sync-Device $true
                 if (Send-Serial 'ping') { $script:lastPing = $now }
             } else {
@@ -453,7 +500,7 @@ try {
             if (Send-Serial 'ping') { $script:lastPing = $now }
         }
         foreach ($line in (Read-SerialLines)) {
-            if ($line -match 'STATUS|ERROR') { Log "device: $($line.Trim())" }
+            if ($line -match 'STATUS|VERSION|ERROR') { Log "device: $($line.Trim())" }
         }
         if (($now - $lastHousekeeping).TotalSeconds -ge 60) {
             Expire-Sessions

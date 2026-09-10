@@ -25,8 +25,16 @@
 //                     calibration, any subset of fields, stored by the board
 //   "calibrate reset" -> back to the compiled-in calibration
 //   "status"         -> device replies with one STATUS line (debug/calibration)
+//   "version"        -> device replies with one VERSION line: the board the
+//                     firmware was built for, the model M5Unified detected,
+//                     chip, flash, firmware / ESP-IDF / M5Unified versions,
+//                     protocol version, build time, ELF SHA, uptime, reset reason
 
 namespace monitor {
+
+// Bumped when words are added: 1 = the 1.0/1.1 set (states, subagents,
+// status); 2 = sessions, ping, calibrate, version
+constexpr int kProtocolVersion = 2;
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
@@ -45,7 +53,7 @@ bool isStatic(State s);
 // States redrawn every frame (spinning gears, the running hourglass)
 bool isAnimated(State s);
 
-enum class Command { Unknown, SetState, SubagentStart, SubagentStop, Status, Ping, Sessions, Calibrate };
+enum class Command { Unknown, SetState, SubagentStart, SubagentStop, Status, Version, Ping, Sessions, Calibrate };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;
