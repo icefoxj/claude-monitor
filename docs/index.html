@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-monitor · flash the AtomS3R from your browser</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 42rem; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.6rem; margin-bottom: .25rem; }
+  .sub { opacity: .7; margin-top: 0; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: .95em; }
+  .box { border: 1px solid rgba(127,127,127,.4); border-radius: .5rem; padding: 1rem 1.25rem; margin: 1.25rem 0; }
+  ol li { margin: .35rem 0; }
+  esp-web-install-button { display: inline-block; margin: .5rem 0; }
+  esp-web-install-button button { font-size: 1.05rem; padding: .6rem 1.2rem; }
+  .unsupported { color: #b23; }
+</style>
+</head>
+<body>
+<h1>claude-monitor</h1>
+<p class="sub">A desk status light for Claude Code on the M5Stack AtomS3R. Firmware <strong>__VERSION__</strong>.</p>
+
+<div class="box">
+  <p>Plug the AtomS3R into a USB-C cable and click the button. Works in Chrome and Edge (Web Serial); Firefox and Safari cannot talk to serial ports.</p>
+  <esp-web-install-button manifest="manifest.json">
+    <span slot="unsupported" class="unsupported">This browser has no Web Serial: use Chrome or Edge, or flash with esptool as described in the README.</span>
+    <span slot="not-allowed" class="unsupported">This page must be served over HTTPS for Web Serial to work.</span>
+  </esp-web-install-button>
+</div>
+
+<ol>
+  <li>A board that has never been flashed may need download mode: hold the side reset button for about 2 seconds before clicking, until the screen goes dark.</li>
+  <li>On Windows, if the claude-monitor daemon is already running it owns the port. Free it first: <code>Invoke-RestMethod -Method Post http://localhost:47831/release</code>, then flash within two minutes.</li>
+  <li>When the browser asks, pick the port named <em>USB Serial Device</em> or <em>USB JTAG/serial debug unit</em>.</li>
+  <li>After the reset the screen shows a green check. Next: set up the daemon and the Claude Code hooks, see the <a href="https://github.com/icefoxj/claude-monitor#the-host-daemon">README</a>.</li>
+</ol>
+
+<p>The image written here is the same <code>*-merged.bin</code> attached to the <a href="https://github.com/icefoxj/claude-monitor/releases">GitHub release</a>: bootloader, partition table and app, flashed at offset 0. Sources, protocol and hook mapping: <a href="https://github.com/icefoxj/claude-monitor">github.com/icefoxj/claude-monitor</a>.</p>
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</body>
+</html>

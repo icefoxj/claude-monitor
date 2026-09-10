@@ -14,13 +14,15 @@ A physical traffic light for [Claude Code](https://claude.com/claude-code), buil
 | Green circle with a check | Done, idle | `Stop`, `SessionStart` |
 | Screen off | Session ended | `SessionEnd` |
 
-The three "look at the terminal" signs (red `!`, blue `?`, red `X`) pulse three times when they appear, so the change catches the eye from across the desk. The built-in IMU keeps the icons upright at any tilt, turning them smoothly as you turn the cube. The button under the screen toggles the display. With several Claude Code sessions open, the cube shows the most urgent state among them.
+The three "look at the terminal" signs (red `!`, blue `?`, red `X`) pulse three times when they appear, so the change catches the eye from across the desk. The built-in IMU keeps the icons upright at any tilt, turning them smoothly as you turn the cube. With several Claude Code sessions open, the cube shows the most urgent state among them.
+
+A thin band around the icon carries three overlays. While Claude works, a **ring** grows clockwise from the top, one lap per ten minutes (yellow, then amber, then red), so a two-minute answer and a half-hour refactor look different from across the room. With two or more sessions open, **one dot per session** sits at the bottom of the band, coloured like the state of each session, while the icon itself shows the most urgent one. A **hollow grey mark** at the top means the host has stopped talking to the cube (no heartbeat for a minute), and the screen dims with it, so a spinning gear is never mistaken for work after the machine went to sleep or the daemon died. After thirty minutes idle, or thirty minutes without a host, the screen switches off; the next state change brings it back. The button under the screen toggles the display by hand and also wakes it.
 
 Native **ESP-IDF 5.5** (C++ / CMake / FreeRTOS) with the official VS Code extension. No Arduino, no PlatformIO, no Wi-Fi, no soldering.
 
 > The full write-up — design decisions, geometry of the icons, every gotcha — is in [claude-code-status-monitor-atoms3r.md](claude-code-status-monitor-atoms3r.md). The firmware has evolved since it was written (nine states instead of four, exclamation and question marks instead of "STOP", continuous rotation, an entry pulse, a `status` command, a host daemon with per-session tracking, and a component/board split); this README describes the current code, and [CHANGELOG.md](CHANGELOG.md) lists what each release added.
 
-In a hurry? Every [release](https://github.com/icefoxj/claude-monitor/releases) ships prebuilt binaries: [flash one](#flashing-a-prebuilt-binary) with `esptool`, then set up [the host daemon](#the-host-daemon) and [the hooks](#claude-code-hooks). Building from source needs the ESP-IDF toolchain and is described in [Build and flash](#build-and-flash).
+In a hurry? Open the [web flasher](https://icefoxj.github.io/claude-monitor/) in Chrome or Edge and click once, or [flash a release image](#flashing-a-prebuilt-binary) with `esptool`; then set up [the host daemon](#the-host-daemon) and [the hooks](#claude-code-hooks). Building from source needs the ESP-IDF toolchain and is described in [Build and flash](#build-and-flash).
 
 ## How it works
 
@@ -34,7 +36,7 @@ The Anthropic API does not expose session state, so the device cannot poll. Inst
 └──────────────┘                      └──────────────┘                  └──────────────┘
 ```
 
-Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). And `status`, which makes the device answer with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=…`) and exists only for calibration and debugging.
+Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat: the daemon sends one every 30 s, and once the device has seen a ping, a minute of silence means the host is gone. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. And `status`, which makes the device answer with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=… fw=… board=… sign=… offset=… sessions=… link=… work=… screen=…`) and exists for calibration and debugging.
 
 The daemon is optional: the hooks can also run a one-line script per event that writes to the port directly (see [Without the daemon](#without-the-daemon)). The daemon is better in every way that matters: no process start-up per event, a single writer on the port, events delivered in order, a log with timestamps, and per-session tracking.
 
@@ -49,13 +51,15 @@ The daemon is optional: the hooks can also run a one-line script per event that 
 - Install path and project path **without spaces or accents**.
 - Linux: add your user to the serial group (`sudo usermod -aG dialout $USER`, then log out/in).
 - For the daemon: PowerShell 7 (`pwsh`). It ships with the repository as a script; on Linux/macOS `pwsh` runs the same script with `-PortName /dev/ttyACM0` (untested there). The installer (`Install-MonitorDaemon.ps1`) is Windows-only, because it registers a scheduled task; elsewhere start the daemon from a user service of your choosing.
-- To flash a prebuilt release instead of building: any Python 3 with `esptool` (`pip install esptool`). No ESP-IDF needed.
+- To flash a prebuilt release instead of building: Chrome or Edge for the [web flasher](https://icefoxj.github.io/claude-monitor/), or any Python 3 with `esptool` (`pip install esptool`). No ESP-IDF needed.
 
 [M5Unified](https://components.espressif.com/components/m5stack/m5unified) (and its dependency M5GFX) come from the ESP Component Registry, declared in `components/monitor-core/idf_component.yml`. The first build downloads them into `firmware/atoms3r/managed_components/`. Tested with ESP-IDF 5.5.0, M5Unified 0.2.21 and M5GFX 0.2.28 (see `dependencies.lock`).
 
 ## Flashing a prebuilt binary
 
-Each [release](https://github.com/icefoxj/claude-monitor/releases) carries four files for the AtomS3R: `claude-monitor-atoms3r-vX.Y.Z-merged.bin`, a single image with bootloader, partition table and app that goes at offset `0x0`, and the three parts separately (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `claude-monitor-atoms3r-vX.Y.Z.bin` at `0x10000`) for anyone who prefers `idf.py`-style flashing. With `esptool` installed:
+The quickest way is the **[web flasher](https://icefoxj.github.io/claude-monitor/)**, a page published from this repository that writes the latest release to the board through the browser's Web Serial (Chrome and Edge; Firefox and Safari have no Web Serial). Plug the AtomS3R in, click, pick the port. The conditions below apply there too: download mode on a board that was never flashed, and the daemon must release the port first.
+
+Without a browser, each [release](https://github.com/icefoxj/claude-monitor/releases) carries four files for the AtomS3R: `claude-monitor-atoms3r-vX.Y.Z-merged.bin`, a single image with bootloader, partition table and app that goes at offset `0x0`, and the three parts separately (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `claude-monitor-atoms3r-vX.Y.Z.bin` at `0x10000`) for anyone who prefers `idf.py`-style flashing. With `esptool` installed:
 
 ```
 python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 claude-monitor-atoms3r-vX.Y.Z-merged.bin
@@ -131,16 +135,21 @@ The script uses .NET's `SerialPort`, pins DTR/RTS low so the board never resets,
 .\host\Install-MonitorDaemon.ps1 -PortName COM5      # -Uninstall to remove
 ```
 
-What it does with each event: keeps one state per Claude Code session (`session_id` comes with every hook), sends the device the most urgent state among the live sessions (`error` > `!` = `?` > hourglass > compacting > processing > idle), counts subagents across sessions, drops a session on `SessionEnd` or after four hours of silence, and re-sends everything when the device reappears after a reboot or re-plug. The log at `%LOCALAPPDATA%\claude-monitor\daemon.log` has one line per event with a millisecond timestamp, which is how you find out where time goes when an icon seems late.
+What it does with each event: keeps one state per Claude Code session (`session_id` comes with every hook), sends the device the most urgent state among the live sessions (`error` > `!` = `?` > hourglass > compacting > processing > idle) plus the list of all of them for the session dots, counts subagents across sessions, drops a session on `SessionEnd` or after four hours of silence, and re-sends everything when the device reappears after a reboot or re-plug. It pings the device every 30 s, which is how the cube notices when the daemon is gone.
+
+A Claude Code killed without a `SessionEnd` (terminal closed the hard way, machine crashed) would leave its last state on the cube for those four hours. So a session that has been in `processing` or `compacting` for fifteen minutes with no change to its transcript file (Claude Code appends to it as it works) is dropped as dead. The cost is a false positive on a single tool call that runs longer than that, corrected by the next hook event. The timeouts are parameters: `-DeadSessionMinutes 15`, `-SessionTimeoutMinutes 240`, `-PingSeconds 30`.
+
+The log at `%LOCALAPPDATA%\claude-monitor\daemon.log` has one line per event with a millisecond timestamp, which is how you find out where time goes when an icon seems late.
 
 Endpoints, all on `http://localhost:47831/`:
 
 | Route | Use |
 |---|---|
 | `POST /hook` | what the hooks call; body is Claude Code's hook JSON |
-| `GET /status` | daemon state, sessions, what the device was last told |
+| `GET /status` | daemon state, sessions (state, project folder, last event), what the device was last told |
 | `GET /serial/status` | asks the device for its `STATUS` line and returns it |
 | `POST /state/<state>` | writes one state to the device (what `Send-ClaudeState.ps1` uses) |
+| `POST /calibrate?rot=1&sign=-1&offset=0` | stores the orientation calibration on the device (any subset) and returns its `STATUS`; `?reset=1` restores the compiled defaults |
 | `POST /release[?seconds=120]` | closes the port so `idf.py` can flash; reopens after the delay |
 | `POST /reconnect` | reopens the port now |
 | `GET /health` | `{"ok":true}` |
@@ -237,12 +246,19 @@ On Linux/macOS the command is `echo <state> > /dev/ttyACM0 2>/dev/null || true` 
 
 ## Calibrating auto-rotation
 
-The icons are redrawn at the angle of the gravity vector, low-pass filtered, so they turn smoothly with the cube. How the BMI270 is mounted relative to the panel varies, so there are three constants in `firmware/atoms3r/main/main.cpp`:
+The icons are redrawn at the angle of the gravity vector, low-pass filtered, so they turn smoothly with the cube. How the BMI270 is mounted relative to the panel varies, so the mapping has three values:
 
-- **Lying flat** — `kBootRotationOffset` (0–3, steps of 90° clockwise) is added to the display's default rotation at boot. It is also the frame everything is drawn in.
-- **Tilted or standing** — the icon angle is `angleSign * atan2(ay, ax) + angleOffset` (`TiltConfig`). If the icon turns the wrong way, flip the sign; if it is consistently off, adjust the offset (radians).
+- **Rotation** (`rot`, 0–3, steps of 90° clockwise): the display rotation. It is the frame everything is drawn in and what shows when the cube lies flat.
+- **Sign and offset**: the icon angle is `sign * atan2(ay, ax) + offset`. If the icon turns the wrong way, flip the sign; if it is consistently off, adjust the offset (degrees).
 
-The committed values were verified on one AtomS3R in all four standing positions and under continuous tilt. To check yours, stand the cube on a side and read `angle=` from `http://localhost:47831/serial/status` (or send `status` over the port yourself) and compare it with what looks upright. The angle is held while the cube lies flat (`|az| > 0.80 g`) or the tilt is too small to be reliable (in-plane component below 0.40 g), so a cube resting on a desk never twitches.
+The compiled defaults in `firmware/atoms3r/main/main.cpp` (`kBootRotationOffset`, `kTilt`) were verified on one AtomS3R in all four standing positions and under continuous tilt. If yours comes out different there is no need to rebuild: the values can be stored on the device. With the daemon running:
+
+```powershell
+Invoke-RestMethod -Method Post 'http://localhost:47831/calibrate?rot=1&sign=-1&offset=0'   # any subset of the three
+Invoke-RestMethod -Method Post 'http://localhost:47831/calibrate?reset=1'                   # back to the compiled defaults
+```
+
+Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over the port. The device applies the values at once, stores them in flash (NVS, so they survive reboots and reflashing the app), and answers with its `STATUS` line, where `rot=`, `sign=` and `offset=` show what is in effect. To check, stand the cube on a side, read `angle=` from `http://localhost:47831/serial/status` and compare it with what looks upright. The angle is held while the cube lies flat (`|az| > 0.80 g`) or the tilt is too small to be reliable (in-plane component below 0.40 g), so a cube resting on a desk never twitches.
 
 ## Project layout
 
@@ -264,6 +280,9 @@ claude-monitor/
 │   ├── Monitor-Daemon.ps1          # the daemon: port owner, HTTP hook receiver, per-session state
 │   ├── Install-MonitorDaemon.ps1   # registers it as a logon scheduled task (Windows)
 │   └── Send-ClaudeState.ps1        # one-shot sender (via the daemon if running, else the port)
+├── tests/host/                     # host tests for protocol and tilt: any C++17 compiler, run.sh / run.ps1
+├── docs/index.html                 # the web flasher page, published by CI with each release
+├── .github/workflows/build.yml     # CI: host tests, firmware build, release assets, web flasher
 ├── claude-monitor.code-workspace   # VS Code multi-root: repo + firmware/atoms3r
 ├── claude-code-status-monitor-atoms3r.md   # the original article
 ├── CHANGELOG.md                    # what each release changed
@@ -277,12 +296,19 @@ claude-monitor/
 
 Everything is drawn into an in-RAM canvas (`M5Canvas`, 32 KB on the AtomS3R) and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle.
 
+## Tests and CI
+
+The board-independent code with no display dependency (`protocol.cpp`, `tilt.cpp`) has host tests in `tests/host/`: plain C++17, no framework. `tests/host/run.sh` builds and runs them on Linux/macOS with any `g++` or `clang++`; `tests/host/run.ps1` does it on Windows with MSVC (found through `vswhere`) or a C++17 `g++`. They cover the line parser, every protocol word, the `calibrate` syntax and the tilt filter, including its wrap-around. The icons and the state machine need an `M5Canvas`, so they are checked on the hardware.
+
+GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds the AtomS3R firmware with ESP-IDF 5.5 on every push and pull request, keeping the four images as a workflow artifact. On a version tag it also attaches them to the GitHub release for that tag and publishes the web flasher page with the merged image and its ESP Web Tools manifest.
+
 ## Known limitations
 
 - There is no hook event when a permission is approved, so the red sign lasts until the approved tool finishes.
+- A single tool call that runs for more than fifteen minutes without any other event makes the daemon drop the session as dead; the icon goes back to whatever the other sessions show until the next hook event revives it. Raise `-DeadSessionMinutes` if that bites.
 - `Notification` semantics vary between Claude Code versions; if you get a green check where you expected the exclamation sign, that's why.
 - ESP-IDF logs and the protocol share the same USB port. Harmless: the daemon reads and discards the log lines, and only reacts to `STATUS` replies.
-- The daemon must be running for the HTTP hooks to reach anything; when it is not, Claude Code reports the failed hook and carries on. The scheduled task restarts it at logon and after crashes.
+- The daemon must be running for the HTTP hooks to reach anything; when it is not, Claude Code reports the failed hook and carries on, and the cube shows the grey mark after a minute. The scheduled task restarts it at logon and after crashes.
 - A manual write through `Send-ClaudeState.ps1` or `POST /state/<state>` bypasses the per-session bookkeeping; the next hook event that changes the aggregate state overrides it.
 - Only the AtomS3R is supported today. The code is split so that a second board (the M5Stack Tab5 is the candidate) is another `firmware/<board>/` project, but none exists yet.
 

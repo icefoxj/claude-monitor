@@ -1,0 +1,121 @@
+# Builds the firmware and runs the host tests on every push and pull
+# request. On a version tag it also attaches the AtomS3R images to the
+# GitHub release for that tag and publishes the browser flasher page.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write    # release assets
+  pages: write       # web flasher
+  id-token: write    # deploy-pages
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  host-tests:
+    name: monitor-core host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run
+        run: bash tests/host/run.sh
+
+  atoms3r:
+    name: firmware atoms3r
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # tags, so the app version (git describe) is right
+
+      - name: Build with ESP-IDF 5.5
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5
+          target: esp32s3
+          path: firmware/atoms3r
+
+      - name: Collect the images
+        run: |
+          set -euo pipefail
+          VERSION="$(git describe --tags --always)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          pip install --quiet esptool
+          B=firmware/atoms3r/build
+          mkdir -p dist
+          python -m esptool --chip esp32s3 merge_bin \
+            -o "dist/claude-monitor-atoms3r-$VERSION-merged.bin" \
+            --flash_mode dio --flash_freq 80m --flash_size 8MB \
+            0x0 "$B/bootloader/bootloader.bin" \
+            0x8000 "$B/partition_table/partition-table.bin" \
+            0x10000 "$B/claude-monitor-atoms3r.bin"
+          cp "$B/claude-monitor-atoms3r.bin" "dist/claude-monitor-atoms3r-$VERSION.bin"
+          cp "$B/bootloader/bootloader.bin" "$B/partition_table/partition-table.bin" dist/
+          echo "app version embedded in the binary:"
+          grep -a -o -m1 'v[0-9][0-9A-Za-z.+-]*' "$B/claude-monitor-atoms3r.bin" | head -1 || true
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-monitor-atoms3r-${{ env.VERSION }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+
+  web-flasher:
+    name: web flasher (GitHub Pages)
+    needs: atoms3r
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: claude-monitor-atoms3r-*
+          path: dist
+          merge-multiple: true
+      - name: Assemble the site
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p site
+          cp docs/index.html site/
+          cp dist/*-merged.bin site/
+          IMAGE="$(basename dist/*-merged.bin)"
+          cat > site/manifest.json <<EOF
+          {
+            "name": "claude-monitor for the M5Stack AtomS3R",
+            "version": "$VERSION",
+            "new_install_prompt_erase": false,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [ { "path": "$IMAGE", "offset": 0 } ]
+              }
+            ]
+          }
+          EOF
+          sed -i "s/__VERSION__/$VERSION/g" site/index.html
+          ls -l site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

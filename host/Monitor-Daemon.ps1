@@ -12,12 +12,19 @@
     Every Claude Code session is tracked separately; the device shows the most
     urgent state among the live sessions (error > waiting_user = question >
     paused > compacting > processing > idle), so a second session cannot hide a
-    permission prompt from the first one.
+    permission prompt from the first one. The device also gets the list of
+    live sessions ("sessions pwi", one letter each) for its session dots, and
+    a "ping" every PingSeconds so it can tell when the host is gone.
+
+    A session whose Claude Code was killed without a SessionEnd would stay
+    for SessionTimeoutMinutes; a processing/compacting session whose
+    transcript file has not changed for DeadSessionMinutes is dropped early.
 
     Endpoints (all on http://localhost:<HttpPort>/):
       POST /hook            Claude Code hook input JSON (any event)
       POST /state/<state>   write one state straight to the device (tests)
       GET  /serial/<cmd>    write any protocol word; for "status" returns the reply
+      POST /calibrate?rot=<0-3>&sign=<1|-1>&offset=<deg>   store the orientation on the device; ?reset=1 clears it
       GET  /status          daemon state, sessions, device state
       POST /release[?seconds=120]   close the port so idf.py can flash; reopens after the delay
       POST /reconnect       reopen the port now
@@ -31,13 +38,16 @@ param(
     [string]$PortName = "COM5",
     [int]$HttpPort = 47831,
     [string]$LogPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\daemon.log"),
-    [int]$SessionTimeoutMinutes = 240
+    [int]$SessionTimeoutMinutes = 240,
+    [int]$DeadSessionMinutes = 15,
+    [int]$PingSeconds = 30
 )
 
 $ErrorActionPreference = 'Continue'
 
 $States   = @('processing', 'waiting_user', 'question', 'error', 'paused', 'compacting', 'idle', 'off')
 $Priority = @{ off = 0; idle = 1; processing = 2; compacting = 3; paused = 4; question = 5; waiting_user = 5; error = 6 }
+$Code     = @{ processing = 'p'; waiting_user = 'w'; question = 'q'; error = 'e'; paused = 'h'; compacting = 'c'; idle = 'i' }
 
 # ---------------- logging ----------------
 
@@ -61,6 +71,8 @@ $script:releaseUntil    = [datetime]::MinValue
 $script:nextOpenTry     = [datetime]::MinValue
 $script:deviceState     = $null   # last state written to the device
 $script:deviceSubagents = 0       # subagent count the device currently holds
+$script:deviceSessions  = $null   # session codes the device currently shows
+$script:lastPing        = [datetime]::MinValue
 
 function Open-Serial {
     try {
@@ -112,10 +124,11 @@ function Read-SerialLines {
     return @()
 }
 
-# Writes a protocol word; for "status" waits briefly for the STATUS reply
+# Writes a protocol line; for "status" and "calibrate" waits briefly for the
+# device's reply (a STATUS line, or ERROR for a rejected calibration)
 function Send-SerialCommand([string]$cmd) {
     if (-not (Send-Serial $cmd)) { return $null }
-    if ($cmd -ne 'status') { return $null }
+    if ($cmd -ne 'status' -and $cmd -notlike 'calibrate*') { return $null }
     $deadline = (Get-Date).AddSeconds(1.5)
     $buf = ''
     while ((Get-Date) -lt $deadline) {
@@ -123,30 +136,62 @@ function Send-SerialCommand([string]$cmd) {
         try {
             if ($script:serial -and $script:serial.BytesToRead -gt 0) { $buf += $script:serial.ReadExisting() }
         } catch {}
-        if ($buf -match 'STATUS[^\r\n]*') { return $Matches[0] }
+        if ($buf -match '(STATUS|ERROR)[^\r\n]*') { return $Matches[0] }
     }
     return $null
 }
 
 # ---------------- sessions ----------------
 
-$script:sessions = @{}   # session_id -> @{ state; subagents; last }
+$script:sessions = @{}   # session_id -> @{ state; subagents; last; transcript; project }
 
 function Get-Session([string]$id) {
     if (-not $script:sessions.ContainsKey($id)) {
-        $script:sessions[$id] = @{ state = 'idle'; subagents = 0; last = (Get-Date) }
+        $script:sessions[$id] = @{ state = 'idle'; subagents = 0; last = (Get-Date); transcript = $null; project = $null }
     }
     return $script:sessions[$id]
 }
 
+# Drops sessions that are silent for too long, and processing/compacting
+# sessions whose transcript stopped changing: Claude Code appends to it
+# while it works, so a stale one means the process is gone (or a tool call
+# has run for longer than DeadSessionMinutes, in which case the next hook
+# event simply recreates the session)
 function Expire-Sessions {
-    $cut = (Get-Date).AddMinutes(-$SessionTimeoutMinutes)
+    $now  = Get-Date
+    $cut  = $now.AddMinutes(-$SessionTimeoutMinutes)
+    $dead = $now.AddMinutes(-$DeadSessionMinutes)
     foreach ($id in @($script:sessions.Keys)) {
-        if ($script:sessions[$id].last -lt $cut) {
+        $s = $script:sessions[$id]
+        if ($s.last -lt $cut) {
             $script:sessions.Remove($id)
             Log "session ${id}: expired after $SessionTimeoutMinutes min without events"
+            continue
+        }
+        if ($s.state -in 'processing', 'compacting' -and $s.transcript -and $s.last -lt $dead) {
+            $stale = $false
+            try {
+                if (-not (Test-Path -LiteralPath $s.transcript)) { $stale = $true }
+                elseif ((Get-Item -LiteralPath $s.transcript).LastWriteTime -lt $dead) { $stale = $true }
+            } catch {}
+            if ($stale) {
+                $script:sessions.Remove($id)
+                Log "session ${id}: dropped, $($s.state) but its transcript has not changed for $DeadSessionMinutes min"
+            }
         }
     }
+}
+
+# One code letter per live session, most urgent first, then most recent
+function Get-SessionCodes {
+    $ordered = $script:sessions.Values | Sort-Object -Property @{ Expression = { $Priority[$_.state] }; Descending = $true },
+                                                              @{ Expression = { $_.last }; Descending = $true }
+    $codes = ''
+    foreach ($s in $ordered) {
+        $c = $Code[$s.state]
+        if ($c) { $codes += $c }
+    }
+    return $codes
 }
 
 function Get-EffectiveState {
@@ -187,6 +232,15 @@ function Sync-Device([bool]$force = $false) {
         if (-not (Send-Serial 'subagent_stop')) { break }
         $script:deviceSubagents--
         Log "device <- subagent_stop ($($script:deviceSubagents))"
+    }
+
+    $codes = Get-SessionCodes
+    if ($force -or $codes -ne $script:deviceSessions) {
+        $line = if ($codes) { "sessions $codes" } else { 'sessions' }
+        if (Send-Serial $line) {
+            Log "device <- $line"
+            $script:deviceSessions = $codes
+        }
     }
 }
 
@@ -242,6 +296,8 @@ function Process-Hook($e) {
             default          { $s.state = $cmd }
         }
         $s.last = Get-Date
+        if ($e.transcript_path) { $s.transcript = [string]$e.transcript_path }
+        if ($e.cwd) { $s.project = Split-Path -Leaf ([string]$e.cwd) }
     }
     Log "hook $tag session=$short -> $cmd (sessions=$($script:sessions.Count))"
     Expire-Sessions
@@ -298,6 +354,20 @@ function Handle-Request($ctx) {
         Send-Response $ctx 200 (@{ sent = $c; reply = $reply } | ConvertTo-Json -Compress)
         return
     }
+    if ($path -eq '/calibrate') {
+        $q = $req.QueryString
+        $fields = @()
+        if ($q['reset']) { $fields = @('reset') }
+        else {
+            foreach ($k in 'rot', 'sign', 'offset') { if ($null -ne $q[$k] -and $q[$k] -ne '') { $fields += "$k=$($q[$k])" } }
+        }
+        if ($fields.Count -eq 0) { Send-Response $ctx 400 '{"error":"give rot, sign, offset or reset"}'; return }
+        $c = "calibrate $($fields -join ' ')"
+        $reply = Send-SerialCommand $c
+        Log "calibrate -> $c (reply: $reply)"
+        Send-Response $ctx 200 (@{ sent = $c; reply = $reply } | ConvertTo-Json -Compress)
+        return
+    }
     if ($path -eq '/release') {
         $sec = 120
         if ($req.QueryString['seconds']) { $sec = [int]$req.QueryString['seconds'] }
@@ -319,9 +389,12 @@ function Handle-Request($ctx) {
             released_until   = $(if ($script:releaseUntil -gt (Get-Date)) { $script:releaseUntil.ToString('s') } else { $null })
             device_state     = $script:deviceState
             device_subagents = $script:deviceSubagents
+            device_sessions  = $script:deviceSessions
             effective        = (Get-EffectiveState)
+            codes            = (Get-SessionCodes)
+            last_ping        = $(if ($script:lastPing -gt [datetime]::MinValue) { $script:lastPing.ToString('s') } else { $null })
             sessions         = @($script:sessions.GetEnumerator() | ForEach-Object {
-                [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s') }
+                [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s'); project = $_.Value.project }
             })
             log              = $LogPath
         }
@@ -369,13 +442,18 @@ try {
                 # The device may have rebooted: push everything again
                 $script:deviceState = $null
                 $script:deviceSubagents = 0
+                $script:deviceSessions = $null
                 Sync-Device $true
+                if (Send-Serial 'ping') { $script:lastPing = $now }
             } else {
                 $script:nextOpenTry = $now.AddSeconds(2)
             }
         }
+        if ($script:serial -and ($now - $script:lastPing).TotalSeconds -ge $PingSeconds) {
+            if (Send-Serial 'ping') { $script:lastPing = $now }
+        }
         foreach ($line in (Read-SerialLines)) {
-            if ($line -match 'STATUS') { Log "device: $($line.Trim())" }
+            if ($line -match 'STATUS|ERROR') { Log "device: $($line.Trim())" }
         }
         if (($now - $lastHousekeeping).TotalSeconds -ge 60) {
             Expire-Sessions

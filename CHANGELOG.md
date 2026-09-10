@@ -2,6 +2,24 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt AtomS3R images. Dates are release dates.
 
+## 1.2.0 — 2026-09-10
+
+### Added
+
+- Overlays on a band around the icon: an elapsed-work **ring** while Claude works (one lap per ten minutes: yellow, amber, red), one **dot per live session** when two or more Claude Code sessions are open (coloured by each session's state), and a **hollow grey mark** when the host's heartbeat stops.
+- Heartbeat: the daemon sends `ping` every 30 s; once the device has seen one, a minute of silence dims the screen and shows the mark. Hosts that never ping (the no-daemon variant) are unaffected.
+- Screen policy: off after thirty minutes idle or thirty minutes without a host, back on at the next state change; the button wakes it as well as toggling it.
+- Runtime orientation calibration: `calibrate rot=<0-3> sign=<1|-1> offset=<deg>` / `calibrate reset` over the protocol, `POST /calibrate?…` on the daemon, stored in NVS on the device. No rebuild per unit any more.
+- `STATUS` reports `fw=` (app version), `board=`, the calibration in effect (`sign=`, `offset=`), the session codes, `link=`, `work=` (seconds of processing this turn) and `screen=`.
+- Daemon: `sessions <codes>` to the device, per-session project folder in `/status`, and dead-session detection: a `processing`/`compacting` session whose transcript has not changed for `-DeadSessionMinutes` (15) is dropped instead of lingering for four hours.
+- Host tests for `protocol.cpp` and `tilt.cpp` (`tests/host/`, plain C++17, `run.sh` / `run.ps1`).
+- CI (GitHub Actions): host tests and firmware build on every push; on a tag, the four images are attached to the release and the **web flasher** (ESP Web Tools on GitHub Pages, https://icefoxj.github.io/claude-monitor/) is published.
+
+### Changed
+
+- `Icons` no longer pushes the canvas from each icon; the state machine composes icon, overlays and then `push()`. Arcs use a segment every 6°, so a full ring is round.
+- `Ui::apply` returns whether the state changed; the work timer and the subagent count reset together when a turn ends.
+
 ## 1.1.0 — 2026-09-10
 
 ### Added

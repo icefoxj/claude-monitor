@@ -90,7 +90,10 @@ void Icons::thickLine(Pt a, Pt b, float thickness, uint16_t color){
 
 void Icons::thickArc(float cx, float cy, float r, float a0, float a1,
                      float thickness, uint16_t color, float angle, float scale){
-    const int steps = 16;
+    // A segment every ~6 degrees keeps a full ring round at radius 60
+    int steps = static_cast<int>(fabsf(a1 - a0) / 6.0f);
+    if (steps < 4) steps = 4;
+    if (steps > 64) steps = 64;
     float t0 = a0 * kPi / 180.0f;
     Pt prev = rotated(cx + r * cosf(t0), cy + r * sinf(t0), angle, scale);
     for (int i = 1; i <= steps; i++){
@@ -175,6 +178,53 @@ void Icons::push(){
     canvas_.pushSprite(pushX_, pushY_);
 }
 
+// ---------------- overlays ----------------
+
+constexpr float kBandRadius = 60.0f;   // just outside the icons (max 58 with the pulse excluded)
+
+void Icons::ring(float angle, float fraction, int lap){
+    static constexpr uint16_t kLapColor[] = { kColorYellow, kColorAmber, kColorRed };
+    if (lap >= 3){
+        thickArc(0, 0, kBandRadius, -90, 270, 3, kColorRed, angle, 1.0f);
+        return;
+    }
+    if (lap > 0){
+        thickArc(0, 0, kBandRadius, -90, 270, 3, kLapColor[lap - 1], angle, 1.0f);
+    }
+    if (fraction > 0.005f){
+        thickArc(0, 0, kBandRadius, -90, -90 + 360.0f * fraction, 3, kLapColor[lap], angle, 1.0f);
+    }
+}
+
+void Icons::sessionDots(float angle, std::string_view codes){
+    int n = static_cast<int>(codes.size());
+    if (n > 8) n = 8;
+    const float step = 10.0f;   // degrees between dots along the band
+    for (int i = 0; i < n; i++){
+        uint16_t color;
+        switch (codes[i]){
+            case 'p': color = kColorYellow; break;
+            case 'c': color = kColorGrey;   break;
+            case 'w':
+            case 'e': color = kColorRed;    break;
+            case 'q': color = kColorBlue;   break;
+            case 'h': color = kColorAmber;  break;
+            case 'i': color = kColorGreen;  break;
+            default:  color = kColorGlass;  break;
+        }
+        float a = (90.0f + (i - (n - 1) * 0.5f) * step) * kPi / 180.0f;
+        Pt p = rotated(kBandRadius * cosf(a), kBandRadius * sinf(a), angle);
+        canvas_.fillCircle(px(p.x), px(p.y), px(4.5f * unit_), kColorBg);   // outline, so it reads over the ring
+        canvas_.fillCircle(px(p.x), px(p.y), px(3.5f * unit_), color);
+    }
+}
+
+void Icons::linkLost(float angle){
+    Pt p = rotated(0, -kBandRadius, angle);
+    canvas_.fillCircle(px(p.x), px(p.y), px(5.0f * unit_), kColorGrey);
+    canvas_.fillCircle(px(p.x), px(p.y), px(2.5f * unit_), kColorBg);
+}
+
 // ---------------- icons ----------------
 
 void Icons::gear(float spinAngle, GearStyle style){
@@ -193,7 +243,6 @@ void Icons::gear(float spinAngle, GearStyle style){
         uint16_t color = (style == GearStyle::Compacting) ? kColorGrey : kColorYellow;
         gearBody(cx_, cy_, spinAngle, 8, 52, 38, 14, color);
     }
-    push();
 }
 
 void Icons::waiting(float angle, float scale){
@@ -203,8 +252,6 @@ void Icons::waiting(float angle, float scale){
     thickLine(rotated(0, -28, angle, scale), rotated(0, 6, angle, scale), 13 * scale, kColorWhite);
     Pt dot = rotated(0, 26, angle, scale);
     canvas_.fillCircle(px(dot.x), px(dot.y), px(7 * scale * unit_), kColorWhite);
-
-    push();
 }
 
 void Icons::question(float angle, float scale){
@@ -215,8 +262,6 @@ void Icons::question(float angle, float scale){
     thickLine(rotated(0, 2, angle, scale), rotated(0, 8, angle, scale), 12 * scale, kColorWhite);
     Pt dot = rotated(0, 27, angle, scale);
     canvas_.fillCircle(px(dot.x), px(dot.y), px(7 * scale * unit_), kColorWhite);
-
-    push();
 }
 
 void Icons::error(float angle, float scale){
@@ -226,8 +271,6 @@ void Icons::error(float angle, float scale){
     // Cross as two thick white strokes, the mirror image of the check
     thickLine(rotated(-21, -21, angle, scale), rotated(21, 21, angle, scale), 13 * scale, kColorWhite);
     thickLine(rotated(-21, 21, angle, scale), rotated(21, -21, angle, scale), 13 * scale, kColorWhite);
-
-    push();
 }
 
 void Icons::paused(float angle, const Hourglass& h){
@@ -289,8 +332,6 @@ void Icons::paused(float angle, const Hourglass& h){
     }
     thickLine(rotated(-31, -42, angle), rotated(31, -42, angle), 9, kColorAmber);
     thickLine(rotated(-31, 42, angle), rotated(31, 42, angle), 9, kColorAmber);
-
-    push();
 }
 
 void Icons::done(float angle){
@@ -300,13 +341,10 @@ void Icons::done(float angle){
     // Check mark as two thick white strokes
     thickLine(rotated(-27, 2, angle), rotated(-8, 23, angle), 13, kColorWhite);
     thickLine(rotated(-8, 23, angle), rotated(30, -21, angle), 13, kColorWhite);
-
-    push();
 }
 
 void Icons::blank(){
     canvas_.fillSprite(kColorBg);
-    push();
 }
 
 }  // namespace monitor

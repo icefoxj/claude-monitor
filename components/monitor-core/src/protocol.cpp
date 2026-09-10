@@ -1,5 +1,7 @@
 #include "monitor/protocol.h"
 
+#include <cstdlib>
+
 namespace monitor {
 
 const char* stateName(State s){
@@ -16,6 +18,20 @@ const char* stateName(State s){
     return "?";
 }
 
+char sessionCode(State s){
+    switch(s){
+        case State::Processing:  return 'p';
+        case State::WaitingUser: return 'w';
+        case State::Question:    return 'q';
+        case State::Error:       return 'e';
+        case State::Paused:      return 'h';
+        case State::Compacting:  return 'c';
+        case State::Idle:        return 'i';
+        case State::Off:         return '-';
+    }
+    return '-';
+}
+
 bool needsAttention(State s){
     return s == State::WaitingUser || s == State::Question || s == State::Error;
 }
@@ -30,16 +46,42 @@ bool isAnimated(State s){
 
 ParsedCommand parseCommand(std::string_view line){
     ParsedCommand cmd;
-    if (line == "status"){
+
+    // First word and, after the spaces, the argument
+    size_t sp = line.find(' ');
+    std::string_view word = line.substr(0, sp);
+    std::string_view arg;
+    if (sp != std::string_view::npos){
+        arg = line.substr(sp + 1);
+        while (!arg.empty() && arg.front() == ' '){
+            arg.remove_prefix(1);
+        }
+    }
+
+    if (word == "status"){
         cmd.kind = Command::Status;
         return cmd;
     }
-    if (line == "subagent_start"){
+    if (word == "ping"){
+        cmd.kind = Command::Ping;
+        return cmd;
+    }
+    if (word == "subagent_start"){
         cmd.kind = Command::SubagentStart;
         return cmd;
     }
-    if (line == "subagent_stop"){
+    if (word == "subagent_stop"){
         cmd.kind = Command::SubagentStop;
+        return cmd;
+    }
+    if (word == "sessions"){
+        cmd.kind = Command::Sessions;
+        cmd.arg = std::string(arg);
+        return cmd;
+    }
+    if (word == "calibrate"){
+        cmd.kind = Command::Calibrate;
+        cmd.arg = std::string(arg);
         return cmd;
     }
     static const State kStates[] = {
@@ -47,13 +89,63 @@ ParsedCommand parseCommand(std::string_view line){
         State::Paused, State::Compacting, State::Idle, State::Off,
     };
     for (State s : kStates){
-        if (line == stateName(s)){
+        if (word == stateName(s)){
             cmd.kind = Command::SetState;
             cmd.state = s;
             return cmd;
         }
     }
     return cmd;   // Unknown: silently ignored by the caller
+}
+
+bool parseCalibration(std::string_view args, CalibrationRequest& out){
+    out = CalibrationRequest{};
+    if (args == "reset"){
+        out.reset = true;
+        return true;
+    }
+
+    size_t pos = 0;
+    while (pos < args.size()){
+        size_t end = args.find(' ', pos);
+        if (end == std::string_view::npos){
+            end = args.size();
+        }
+        std::string_view tok = args.substr(pos, end - pos);
+        pos = end + 1;
+        if (tok.empty()){
+            continue;
+        }
+        size_t eq = tok.find('=');
+        if (eq == std::string_view::npos){
+            return false;
+        }
+        std::string_view key = tok.substr(0, eq);
+        std::string value(tok.substr(eq + 1));
+        if (value.empty()){
+            return false;
+        }
+        char* endp = nullptr;
+        if (key == "rot"){
+            long v = strtol(value.c_str(), &endp, 10);
+            if (*endp != '\0' || v < 0 || v > 3) return false;
+            out.hasRotation = true;
+            out.rotation = static_cast<int>(v);
+        } else if (key == "sign"){
+            long v = strtol(value.c_str(), &endp, 10);
+            if (*endp != '\0' || (v != 1 && v != -1)) return false;
+            out.hasSign = true;
+            out.sign = static_cast<int>(v);
+        } else if (key == "offset"){
+            float v = strtof(value.c_str(), &endp);
+            if (*endp != '\0' || v < -360.0f || v > 360.0f) return false;
+            out.hasOffset = true;
+            out.offsetDeg = v;
+        } else {
+            return false;
+        }
+    }
+    return out.hasRotation || out.hasSign || out.hasOffset;
 }
 
 bool LineParser::feed(char c, std::string& out){
