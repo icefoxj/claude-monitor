@@ -1,11 +1,20 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("processing", "waiting_user", "question", "idle", "off")]
+    [ValidateSet("processing", "waiting_user", "question", "error", "paused", "compacting",
+                 "idle", "off", "subagent_start", "subagent_stop")]
     [string]$State,
 
-    [string]$PortName = "COM5"
+    [string]$PortName = "COM5",
+    [int]$DaemonPort = 47831
 )
 
+# If the daemon is running it owns the port: hand the state to it instead
+try {
+    Invoke-RestMethod -Uri "http://localhost:$DaemonPort/state/$State" -Method Post -TimeoutSec 1 | Out-Null
+    exit 0
+} catch {}
+
+# No daemon: write to the port ourselves
 $port = New-Object System.IO.Ports.SerialPort $PortName, 115200
 $port.NewLine       = "`n"     # WriteLine will terminate with \n, not \r\n
 $port.DtrEnable     = $false   # removes any chance of an accidental reset
