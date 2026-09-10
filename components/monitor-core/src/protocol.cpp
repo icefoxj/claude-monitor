@@ -7,6 +7,9 @@ const char* stateName(State s){
         case State::Processing:  return "processing";
         case State::WaitingUser: return "waiting_user";
         case State::Question:    return "question";
+        case State::Error:       return "error";
+        case State::Paused:      return "paused";
+        case State::Compacting:  return "compacting";
         case State::Idle:        return "idle";
         case State::Off:         return "off";
     }
@@ -14,11 +17,15 @@ const char* stateName(State s){
 }
 
 bool needsAttention(State s){
-    return s == State::WaitingUser || s == State::Question;
+    return s == State::WaitingUser || s == State::Question || s == State::Error;
 }
 
 bool isStatic(State s){
-    return s == State::Idle || s == State::WaitingUser || s == State::Question;
+    return s == State::Idle || s == State::WaitingUser || s == State::Question || s == State::Error;
+}
+
+bool isAnimated(State s){
+    return s == State::Processing || s == State::Compacting || s == State::Paused;
 }
 
 ParsedCommand parseCommand(std::string_view line){
@@ -27,8 +34,17 @@ ParsedCommand parseCommand(std::string_view line){
         cmd.kind = Command::Status;
         return cmd;
     }
+    if (line == "subagent_start"){
+        cmd.kind = Command::SubagentStart;
+        return cmd;
+    }
+    if (line == "subagent_stop"){
+        cmd.kind = Command::SubagentStop;
+        return cmd;
+    }
     static const State kStates[] = {
-        State::Processing, State::WaitingUser, State::Question, State::Idle, State::Off,
+        State::Processing, State::WaitingUser, State::Question, State::Error,
+        State::Paused, State::Compacting, State::Idle, State::Off,
     };
     for (State s : kStates){
         if (line == stateName(s)){

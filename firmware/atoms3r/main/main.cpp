@@ -50,10 +50,10 @@ M5Canvas canvas(&M5.Display);
 // Reply to the "status" command straight through the USB driver, so it
 // works regardless of where the ESP-IDF console is routed
 void sendStatus(const monitor::Ui& ui, uint8_t rotation, float ax, float ay, float az){
-    char msg[112];
+    char msg[128];
     int n = snprintf(msg, sizeof(msg),
-                     "STATUS state=%s rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f\n",
-                     monitor::stateName(ui.state()), rotation,
+                     "STATUS state=%s subagents=%d rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f\n",
+                     monitor::stateName(ui.state()), ui.subagents(), rotation,
                      ui.tilt().angle * 180.0f / 3.14159265f, ax, ay, az);
     if (n > 0){
         usb_serial_jtag_write_bytes(msg, n, pdMS_TO_TICKS(20));
@@ -117,10 +117,12 @@ extern "C" void app_main(void){
         for (int i = 0; i < bytesRead; i++){
             if (parser.feed(static_cast<char>(buf[i]), line)){
                 auto cmd = monitor::parseCommand(line);
-                if (cmd.kind == monitor::Command::Status){
-                    sendStatus(ui, rotation, ax, ay, az);
-                } else if (cmd.kind == monitor::Command::SetState){
-                    ui.apply(cmd.state);
+                switch (cmd.kind){
+                    case monitor::Command::SetState:      ui.apply(cmd.state); break;
+                    case monitor::Command::SubagentStart: ui.subagentStart(); break;
+                    case monitor::Command::SubagentStop:  ui.subagentStop(); break;
+                    case monitor::Command::Status:        sendStatus(ui, rotation, ax, ay, az); break;
+                    case monitor::Command::Unknown:       break;
                 }
             }
         }

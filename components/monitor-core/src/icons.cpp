@@ -16,10 +16,35 @@ constexpr uint16_t kColorBg     = rgb565(0, 0, 0);
 constexpr uint16_t kColorRed    = rgb565(210, 35, 35);
 constexpr uint16_t kColorBlue   = rgb565(35, 120, 225);
 constexpr uint16_t kColorYellow = rgb565(255, 200, 0);
+constexpr uint16_t kColorAmber  = rgb565(255, 150, 30);
+constexpr uint16_t kColorSand   = rgb565(255, 205, 70);
+constexpr uint16_t kColorGlass  = rgb565(48, 32, 8);
 constexpr uint16_t kColorGreen  = rgb565(60, 180, 75);
+constexpr uint16_t kColorGrey   = rgb565(150, 150, 150);
 constexpr uint16_t kColorWhite  = rgb565(255, 255, 255);
 
 inline int px(float v){ return static_cast<int>(lroundf(v)); }
+
+// Hourglass glass wall: top bulb, left side, from the frame down to the
+// neck, in 128-space. The other three walls are mirror images.
+constexpr float kWall[][2] = {
+    {-26, -37}, {-26, -28}, {-23, -19}, {-17, -11}, {-9, -5}, {-3, -1},
+};
+constexpr int kWallPoints = sizeof(kWall) / sizeof(kWall[0]);
+constexpr float kBulbFrame = -37.0f;   // height of the wide end
+constexpr float kBulbNeck  = -1.0f;    // height of the neck
+
+// x of the left wall at height y (top-bulb coordinates), piecewise linear
+float wallX(float y){
+    if (y <= kWall[0][1]) return kWall[0][0];
+    for (int i = 0; i < kWallPoints - 1; i++){
+        if (y <= kWall[i + 1][1]){
+            float t = (y - kWall[i][1]) / (kWall[i + 1][1] - kWall[i][1]);
+            return kWall[i][0] + t * (kWall[i + 1][0] - kWall[i][0]);
+        }
+    }
+    return kWall[kWallPoints - 1][0];
+}
 
 }  // namespace
 
@@ -41,6 +66,10 @@ Icons::Pt Icons::rotated(float x, float y, float angle, float scale) const {
     return { cx_ + x * c - y * s, cy_ + x * s + y * c };
 }
 
+void Icons::tri(Pt a, Pt b, Pt c, uint16_t color){
+    canvas_.fillTriangle(px(a.x), px(a.y), px(b.x), px(b.y), px(c.x), px(c.y), color);
+}
+
 // Oriented rectangle (2 triangles) plus a circle at each end
 void Icons::thickLine(Pt a, Pt b, float thickness, uint16_t color){
     float dx = b.x - a.x;
@@ -53,8 +82,8 @@ void Icons::thickLine(Pt a, Pt b, float thickness, uint16_t color){
     float hx = -dy / length * half;
     float hy =  dx / length * half;
 
-    canvas_.fillTriangle(px(a.x+hx), px(a.y+hy), px(b.x+hx), px(b.y+hy), px(b.x-hx), px(b.y-hy), color);
-    canvas_.fillTriangle(px(a.x+hx), px(a.y+hy), px(b.x-hx), px(b.y-hy), px(a.x-hx), px(a.y-hy), color);
+    tri({a.x+hx, a.y+hy}, {b.x+hx, b.y+hy}, {b.x-hx, b.y-hy}, color);
+    tri({a.x+hx, a.y+hy}, {b.x-hx, b.y-hy}, {a.x-hx, a.y-hy}, color);
     canvas_.fillCircle(px(a.x), px(a.y), px(half), color);
     canvas_.fillCircle(px(b.x), px(b.y), px(half), color);
 }
@@ -81,7 +110,7 @@ void Icons::octagon(float radius, float angle, uint16_t color){
         v[i] = { cx_ + rp * cosf(a), cy_ + rp * sinf(a) };
     }
     for (int i = 1; i < 7; i++){
-        canvas_.fillTriangle(px(v[0].x), px(v[0].y), px(v[i].x), px(v[i].y), px(v[i+1].x), px(v[i+1].y), color);
+        tri(v[0], v[i], v[i+1], color);
     }
 }
 
@@ -91,11 +120,81 @@ void Icons::sign(uint16_t body, float angle, float scale){
     octagon(51 * scale, angle, body);          // coloured body
 }
 
+// Each tooth is a radial trapezoid: wide base at the body, narrower tip;
+// decomposed into 2 triangles. Rotation is done by maths, no sprite API
+void Icons::gearBody(float cx, float cy, float spin, int teeth,
+                     float rTip, float rBody, float rHole, uint16_t color){
+    rTip  *= unit_;
+    rBody *= unit_;
+    rHole *= unit_;
+    const float step = 2.0f * kPi / teeth;
+    for (int i = 0; i < teeth; i++){
+        float a  = spin + i * step;
+        float wb = step * 0.28f;   // angular half-width at the base
+        float wt = step * 0.16f;   // angular half-width at the tip
+        Pt b0 = { cx + rBody * cosf(a - wb), cy + rBody * sinf(a - wb) };
+        Pt b1 = { cx + rBody * cosf(a + wb), cy + rBody * sinf(a + wb) };
+        Pt t0 = { cx + rTip * cosf(a - wt),  cy + rTip * sinf(a - wt) };
+        Pt t1 = { cx + rTip * cosf(a + wt),  cy + rTip * sinf(a + wt) };
+        tri(b0, b1, t1, color);
+        tri(b0, t1, t0, color);
+    }
+    canvas_.fillCircle(px(cx), px(cy), px(rBody), color);
+    canvas_.fillCircle(px(cx), px(cy), px(rHole), kColorBg);   // centre hole
+}
+
+// Polygon between the two walls from ya to yb, filled as a fan from its middle
+void Icons::fillBulb(float sy, float ya, float yb, uint16_t color, float angle){
+    if (yb - ya < 0.5f){
+        return;
+    }
+    Pt poly[2 * kWallPoints + 4];
+    int n = 0;
+    poly[n++] = rotated(wallX(ya), ya * sy, angle);
+    for (int i = 0; i < kWallPoints; i++){
+        if (kWall[i][1] > ya && kWall[i][1] < yb){
+            poly[n++] = rotated(kWall[i][0], kWall[i][1] * sy, angle);
+        }
+    }
+    poly[n++] = rotated(wallX(yb), yb * sy, angle);
+    poly[n++] = rotated(-wallX(yb), yb * sy, angle);
+    for (int i = kWallPoints - 1; i >= 0; i--){
+        if (kWall[i][1] > ya && kWall[i][1] < yb){
+            poly[n++] = rotated(-kWall[i][0], kWall[i][1] * sy, angle);
+        }
+    }
+    poly[n++] = rotated(-wallX(ya), ya * sy, angle);
+
+    Pt c = rotated(0, (ya + yb) * 0.5f * sy, angle);
+    for (int i = 0; i < n; i++){
+        tri(c, poly[i], poly[(i + 1) % n], color);
+    }
+}
+
 void Icons::push(){
     canvas_.pushSprite(pushX_, pushY_);
 }
 
 // ---------------- icons ----------------
+
+void Icons::gear(float spinAngle, GearStyle style){
+    canvas_.fillSprite(kColorBg);
+    if (style == GearStyle::Subagents){
+        // A smaller main gear and a satellite meshing up-right, turning the
+        // other way at the tooth ratio. The pair is offset so that its
+        // bounding box, not the main gear, sits in the centre of the canvas
+        const float mx = cx_ - 6.9f * unit_;
+        const float my = cy_ + 6.9f * unit_;
+        gearBody(mx, my, spinAngle, 8, 42, 30, 11, kColorYellow);
+        const float sx = mx + 36.8f * unit_;
+        const float sy = my - 36.8f * unit_;
+        gearBody(sx, sy, -spinAngle * (8.0f / 6.0f) + kPi / 6.0f, 6, 19, 13, 4, kColorYellow);
+    } else {
+        uint16_t color = (style == GearStyle::Compacting) ? kColorGrey : kColorYellow;
+        gearBody(cx_, cy_, spinAngle, 8, 52, 38, 14, color);
+    }
+    push();
+}
 
 void Icons::waiting(float angle, float scale){
     sign(kColorRed, angle, scale);
@@ -120,35 +219,76 @@ void Icons::question(float angle, float scale){
     push();
 }
 
-void Icons::gear(float spinAngle){
+void Icons::error(float angle, float scale){
+    canvas_.fillSprite(kColorBg);
+    canvas_.fillCircle(px(cx_), px(cy_), px(56 * scale * unit_), kColorRed);
+
+    // Cross as two thick white strokes, the mirror image of the check
+    thickLine(rotated(-21, -21, angle, scale), rotated(21, 21, angle, scale), 13 * scale, kColorWhite);
+    thickLine(rotated(-21, 21, angle, scale), rotated(21, -21, angle, scale), 13 * scale, kColorWhite);
+
+    push();
+}
+
+void Icons::paused(float angle, const Hourglass& h){
     canvas_.fillSprite(kColorBg);
 
-    const int   teeth = 8;
-    const float rTip  = 52.0f * unit_;   // outer radius of the teeth
-    const float rBody = 38.0f * unit_;   // body radius
-    const float rHole = 14.0f * unit_;   // centre hole radius
-    const float step  = 2.0f * kPi / teeth;
+    // The whole hourglass turns around the centre during the flip
+    angle += h.flip * kPi;
 
-    // Each tooth is a radial trapezoid: wide base at the body, narrower tip;
-    // decomposed into 2 triangles. Rotation is done by maths, no sprite API
-    for (int i = 0; i < teeth; i++){
-        float a  = spinAngle + i * step;
-        float wb = step * 0.28f;   // angular half-width at the base
-        float wt = step * 0.16f;   // angular half-width at the tip
-        float b0x = cx_ + rBody * cosf(a - wb);
-        float b0y = cy_ + rBody * sinf(a - wb);
-        float b1x = cx_ + rBody * cosf(a + wb);
-        float b1y = cy_ + rBody * sinf(a + wb);
-        float t0x = cx_ + rTip * cosf(a - wt);
-        float t0y = cy_ + rTip * sinf(a - wt);
-        float t1x = cx_ + rTip * cosf(a + wt);
-        float t1y = cy_ + rTip * sinf(a + wt);
+    const float kPileFull = 18.0f;   // height of the sand pile when all of it is in one bulb
+    const float kMound    = 6.0f;    // extra height of the pile's peak at the centre
 
-        canvas_.fillTriangle(px(b0x), px(b0y), px(b1x), px(b1y), px(t1x), px(t1y), kColorYellow);
-        canvas_.fillTriangle(px(b0x), px(b0y), px(t1x), px(t1y), px(t0x), px(t0y), kColorYellow);
+    // Glass interiors: a dark tint so the empty part of a bulb still reads as glass
+    fillBulb(1, kBulbFrame, kBulbNeck, kColorGlass, angle);
+    fillBulb(-1, kBulbFrame, kBulbNeck, kColorGlass, angle);
+
+    // Top bulb: sand resting on the neck, level falling as it drains. Right
+    // after a turn the sand is still at the wide end and slides down (settle)
+    float topLevel = kBulbNeck - 29.0f * (1.0f - h.drained) * h.settle;
+    fillBulb(1, topLevel, kBulbNeck, kColorSand, angle);
+    if (h.settle < 1.0f){
+        float hang = kBulbFrame + kPileFull * (1.0f - h.settle);
+        fillBulb(1, kBulbFrame, hang, kColorSand, angle);
+        float w = 0.75f * -wallX(hang);
+        tri(rotated(-w, hang, angle), rotated(w, hang, angle),
+            rotated(0, hang + kMound * (1.0f - h.settle), angle), kColorSand);
     }
-    canvas_.fillCircle(px(cx_), px(cy_), px(rBody), kColorYellow);
-    canvas_.fillCircle(px(cx_), px(cy_), px(rHole), kColorBg);   // centre hole
+    if (h.falling && kBulbNeck - topLevel > 6.0f){
+        // Funnel-shaped dip where the sand runs out
+        float w = 0.5f * -wallX(topLevel);
+        tri(rotated(-w, topLevel, angle), rotated(w, topLevel, angle),
+            rotated(0, topLevel + 4.0f, angle), kColorGlass);
+    }
+
+    // Bottom bulb: the pile grows from the wide end, with a peak at the centre
+    float pileLevel = kBulbFrame + kPileFull * h.drained;
+    fillBulb(-1, kBulbFrame, pileLevel, kColorSand, angle);
+    float peak = pileLevel + kMound * h.drained;
+    if (h.drained > 0.05f){
+        float w = 0.75f * -wallX(pileLevel);
+        tri(rotated(-w, -pileLevel, angle), rotated(w, -pileLevel, angle),
+            rotated(0, -peak, angle), kColorSand);
+    }
+
+    // Stream through the neck, down to the top of the pile
+    if (h.falling && h.drained < 1.0f){
+        thickLine(rotated(0, kBulbNeck, angle), rotated(0, -peak, angle), 3, kColorSand);
+    }
+
+    // Glass walls on top of the sand, then the frame bars
+    for (float sy : {1.0f, -1.0f}){
+        for (int i = 0; i < kWallPoints - 1; i++){
+            Pt a = rotated(kWall[i][0], kWall[i][1] * sy, angle);
+            Pt b = rotated(kWall[i + 1][0], kWall[i + 1][1] * sy, angle);
+            thickLine(a, b, 4, kColorWhite);
+            Pt a2 = rotated(-kWall[i][0], kWall[i][1] * sy, angle);
+            Pt b2 = rotated(-kWall[i + 1][0], kWall[i + 1][1] * sy, angle);
+            thickLine(a2, b2, 4, kColorWhite);
+        }
+    }
+    thickLine(rotated(-31, -42, angle), rotated(31, -42, angle), 9, kColorAmber);
+    thickLine(rotated(-31, 42, angle), rotated(31, 42, angle), 9, kColorAmber);
 
     push();
 }

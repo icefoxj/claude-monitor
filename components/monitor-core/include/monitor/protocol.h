@@ -6,27 +6,35 @@
 
 // Serial protocol shared by every board: one command per line, terminated
 // by \n. The transport (USB Serial/JTAG, CDC, ...) is the board's business.
-//   "processing"   -> spinning yellow gear (Claude processing)
-//   "waiting_user" -> red sign with an exclamation mark (waiting for a permission)
-//   "question"     -> blue sign with a question mark (Claude asked you something)
-//   "idle"         -> green circle with check (idle)
-//   "off"          -> screen off
-//   "status"       -> device replies with one STATUS line (debug/calibration)
+//   "processing"     -> spinning yellow gear (Claude processing)
+//   "waiting_user"   -> red sign with an exclamation mark (waiting for a permission)
+//   "question"       -> blue sign with a question mark (Claude asked you something)
+//   "error"          -> red circle with a cross (the turn ended with an API error)
+//   "paused"         -> amber hourglass (waiting for a usage limit to reset)
+//   "compacting"     -> spinning grey gear (compacting context, back soon)
+//   "idle"           -> green circle with check (idle)
+//   "off"            -> screen off
+//   "subagent_start" -> one more subagent running: the gear grows a satellite
+//   "subagent_stop"  -> one subagent finished
+//   "status"         -> device replies with one STATUS line (debug/calibration)
 
 namespace monitor {
 
-enum class State { Idle, Processing, WaitingUser, Question, Off };
+enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
 // Protocol word for a state ("processing", "idle", ...)
 const char* stateName(State s);
 
-// States that mean "Claude needs you": they get an entry pulse
+// States that mean "look at the terminal": they get an entry pulse
 bool needsAttention(State s);
 
 // States drawn once and then only redrawn when the tilt changes
 bool isStatic(State s);
 
-enum class Command { Unknown, SetState, Status };
+// States redrawn every frame (spinning gears, the running hourglass)
+bool isAnimated(State s);
+
+enum class Command { Unknown, SetState, SubagentStart, SubagentStop, Status };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;
