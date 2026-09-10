@@ -42,11 +42,11 @@ Protocol: one command per line, `\n`-terminated, no JSON, no handshake. Commands
 - Install path and project path **without spaces or accents**.
 - Linux: add your user to the serial group (`sudo usermod -aG dialout $USER`, then log out/in).
 
-[M5Unified](https://components.espressif.com/components/m5stack/m5unified) (and its dependency M5GFX) come from the ESP Component Registry, declared in `main/idf_component.yml`. The first build downloads them into `managed_components/`. Tested with ESP-IDF 5.5.0, M5Unified 0.2.21 and M5GFX 0.2.28 (see `dependencies.lock`).
+[M5Unified](https://components.espressif.com/components/m5stack/m5unified) (and its dependency M5GFX) come from the ESP Component Registry, declared in `components/monitor-core/idf_component.yml`. The first build downloads them into `firmware/atoms3r/managed_components/`. Tested with ESP-IDF 5.5.0, M5Unified 0.2.21 and M5GFX 0.2.28 (see `dependencies.lock`).
 
 ## Build and flash
 
-Using the extension (command palette or status bar buttons):
+The ESP-IDF project for the AtomS3R lives in `firmware/atoms3r/`. Open that folder in VS Code, or open `claude-monitor.code-workspace`, which lists it as a workspace folder, so the extension sees a project. Then, from the command palette or the status bar buttons:
 
 1. **ESP-IDF: Set Espressif Device Target** → `esp32s3`
 2. Nothing to configure: `sdkconfig.defaults` already sets the target and the **8 MB** flash size, and ESP-IDF applies it when it generates `sdkconfig`. If you do open **ESP-IDF: SDK Configuration Editor**, leave *Channel for console output* at its default: on the S3 that is UART0 with USB Serial/JTAG as a secondary channel, which is what makes the boot log visible over USB.
@@ -58,6 +58,7 @@ Using the extension (command palette or status bar buttons):
 Equivalent CLI, in a terminal with the ESP-IDF environment active (**ESP-IDF: Open ESP-IDF Terminal**, or the "ESP-IDF PowerShell" Start Menu shortcut on Windows):
 
 ```
+cd firmware/atoms3r
 idf.py set-target esp32s3
 idf.py build              # sdkconfig.defaults is applied automatically
 idf.py -p COM5 flash      # /dev/ttyACM0 on Linux, /dev/cu.usbmodemXXXX on macOS
@@ -84,11 +85,11 @@ echo off          > /dev/ttyACM0      # screen off
 **Windows** — use the bundled script (find your port with `[System.IO.Ports.SerialPort]::GetPortNames()`):
 
 ```powershell
-.\Send-ClaudeState.ps1 -State processing -PortName COM5
-.\Send-ClaudeState.ps1 -State waiting_user -PortName COM5
-.\Send-ClaudeState.ps1 -State question -PortName COM5
-.\Send-ClaudeState.ps1 -State idle -PortName COM5
-.\Send-ClaudeState.ps1 -State off -PortName COM5
+.\host\Send-ClaudeState.ps1 -State processing -PortName COM5
+.\host\Send-ClaudeState.ps1 -State waiting_user -PortName COM5
+.\host\Send-ClaudeState.ps1 -State question -PortName COM5
+.\host\Send-ClaudeState.ps1 -State idle -PortName COM5
+.\host\Send-ClaudeState.ps1 -State off -PortName COM5
 ```
 
 The script uses .NET's `SerialPort`, pins DTR/RTS low so the board never resets, retries a busy port a few times, and always exits 0. If nothing happens, something else (usually the monitor) has the port open.
@@ -115,14 +116,14 @@ Hooks live in `~/.claude/settings.json` (all sessions) or `.claude/settings.json
 ```json
 {
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "idle"],         "async": true, "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "processing"],   "async": true, "timeout": 10 }] }],
-    "PreToolUse":       [{ "matcher": "AskUserQuestion",  "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "question"],     "async": true, "timeout": 10 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "processing"],   "async": true, "timeout": 10 }] }],
-    "Notification":     [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "waiting_user"], "async": true, "timeout": 10 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "idle"],         "async": true, "timeout": 10 }] }],
-    "StopFailure":      [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "idle"],         "async": true, "timeout": 10 }] }],
-    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/Send-ClaudeState.ps1", "-State", "off"],          "timeout": 10 }] }]
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "idle"],         "async": true, "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "processing"],   "async": true, "timeout": 10 }] }],
+    "PreToolUse":       [{ "matcher": "AskUserQuestion",  "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "question"],     "async": true, "timeout": 10 }] }],
+    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "processing"],   "async": true, "timeout": 10 }] }],
+    "Notification":     [{ "matcher": "permission_prompt", "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "waiting_user"], "async": true, "timeout": 10 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "idle"],         "async": true, "timeout": 10 }] }],
+    "StopFailure":      [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "idle"],         "async": true, "timeout": 10 }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "pwsh.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "E:/work/claude-monitor/host/Send-ClaudeState.ps1", "-State", "off"],          "timeout": 10 }] }]
   }
 }
 ```
@@ -161,24 +162,29 @@ The committed values were verified on one AtomS3R in all four standing positions
 
 ## Project layout
 
+The repository is laid out to host more than one board. Everything that does not depend on the hardware is an ESP-IDF component; each board is a small ESP-IDF project that wires that component to its panel, IMU, buttons and USB.
+
 ```
 claude-monitor/
-├── CMakeLists.txt                  # ESP-IDF root (template, untouched)
-├── sdkconfig.defaults              # target esp32s3, 8 MB flash (idf.py save-defconfig)
-├── main/
-│   ├── CMakeLists.txt              # registers main.cpp
-│   ├── idf_component.yml           # m5stack/m5unified ^0.2
-│   └── main.cpp                    # the whole firmware
-├── Send-ClaudeState.ps1            # Windows hook helper
+├── components/monitor-core/        # board-independent: protocol, icons, tilt filter, state machine
+│   ├── include/monitor/*.h
+│   ├── src/*.cpp
+│   └── idf_component.yml           # m5stack/m5unified ^0.2
+├── firmware/atoms3r/               # ESP-IDF project for the AtomS3R (esp32s3)
+│   ├── CMakeLists.txt              # pulls ../../components in via EXTRA_COMPONENT_DIRS
+│   ├── sdkconfig.defaults          # target esp32s3, 8 MB flash (idf.py save-defconfig)
+│   └── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG
+├── host/Send-ClaudeState.ps1       # Windows hook helper
+├── claude-monitor.code-workspace   # VS Code multi-root: repo + firmware/atoms3r
 ├── claude-code-status-monitor-atoms3r.md   # full article
 ├── CLAUDE.md                       # guidance for Claude Code working on this repo
 ├── LICENSE                         # CC BY 4.0
 └── .devcontainer/                  # optional: espressif/idf Docker image
 ```
 
-`.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port.
+`firmware/atoms3r/.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port.
 
-Everything is drawn into a 32 KB in-RAM canvas (`M5Canvas`) and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — and the static ones are rotated vertex by vertex, which is why they can sit at any angle.
+Everything is drawn into an in-RAM canvas (`M5Canvas`, 32 KB on the AtomS3R) and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and the static ones are rotated vertex by vertex, which is why they can sit at any angle.
 
 ## Known limitations
 

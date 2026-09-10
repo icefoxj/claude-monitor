@@ -1,0 +1,7 @@
+{
+  "folders": [
+    { "name": "claude-monitor", "path": "." },
+    { "name": "firmware: atoms3r", "path": "firmware/atoms3r" }
+  ],
+  "settings": {}
+}

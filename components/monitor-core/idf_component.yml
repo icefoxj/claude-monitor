@@ -1,0 +1,8 @@
+## IDF Component Manager manifest for monitor-core.
+## M5Unified (and M5GFX through it) is public because the icon renderer's
+## header exposes M5Canvas to the board firmware.
+dependencies:
+  idf: ">=5.0"
+  m5stack/m5unified:
+    version: "^0.2"
+    public: true
