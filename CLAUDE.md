@@ -4,18 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Firmware for M5Stack devices that act as a desk status light for Claude Code. Claude Code hooks send a one-word line over USB serial; the device draws the matching icon and keeps it upright as it is tilted. Native **ESP-IDF 5.5** (C++/CMake/FreeRTOS), no Arduino, no PlatformIO, no Wi-Fi, and no host-side component beyond a PowerShell script. The first and reference board is the **AtomS3R** (ESP32-S3, 128×128 IPS display, BMI270 IMU); the layout is built so a second board (planned: Tab5, ESP32-P4) is another small project sharing the same component.
+Firmware for M5Stack devices that act as a desk status light for Claude Code. Claude Code hooks send a one-word line over USB serial; the device draws the matching icon and keeps it upright as it is tilted. Native **ESP-IDF 5.5** (C++/CMake/FreeRTOS), no Arduino, no PlatformIO, no Wi-Fi; the host side is three PowerShell 7 scripts (a daemon that owns the port and receives the hooks over HTTP, its installer, and a one-shot sender). The first and reference board is the **AtomS3R** (ESP32-S3, 128×128 IPS display, BMI270 IMU); the layout is built so a second board (planned: Tab5, ESP32-P4) is another small project sharing the same component.
 
-`claude-code-status-monitor-atoms3r.md` is the original write-up (design rationale, icon geometry, hook configuration) — read it before non-trivial changes. The code has since moved past it on purpose: the waiting icon shows an exclamation mark instead of the word STOP, there is a blue question-mark sign for `AskUserQuestion`, there are `error` (red cross), `paused` (amber hourglass) and `compacting` (grey gear) states plus a subagent counter that gives the gear a satellite, the "look at the terminal" signs pulse on entry, the static icons rotate continuously with the tilt instead of in 90° steps, there is a `status` command, the hook set covers far more than the article's four events, and the code is split into a component plus per-board projects instead of one `main.cpp`. Do not "fix" those back toward the article's listing. The README's hooks section is the current reference for the host side.
+`claude-code-status-monitor-atoms3r.md` is the original write-up (design rationale, icon geometry, hook configuration) — read it before non-trivial changes. The code has since moved past it on purpose: the waiting icon shows an exclamation mark instead of the word STOP, there is a blue question-mark sign for `AskUserQuestion`, there are `error` (red cross), `paused` (amber hourglass) and `compacting` (grey gear) states plus a subagent counter that gives the gear a satellite, the "look at the terminal" signs pulse on entry, the static icons rotate continuously with the tilt instead of in 90° steps, there is a `status` command, the hook set covers far more than the article's four events, and the code is split into a component plus per-board projects instead of one `main.cpp`. Do not "fix" those back toward the article's listing. The README's hooks section is the current reference for the host side, and `CHANGELOG.md` records what each release changed (keep it updated in the same commit as the change, under the next version).
 
 Machine-specific notes (toolchain paths, COM port, antivirus) belong in `CLAUDE.local.md`, which is gitignored.
 
 ## Layout
 
 - `components/monitor-core/` — everything board-independent, in namespace `monitor`: `protocol.h` (states, command parsing, `LineParser`), `tilt.h` (accelerometer → icon angle, `TiltConfig`), `icons.h` (`Icons`: procedural drawing into an `M5Canvas`), `ui.h` (`Ui`: state machine, gear spin, entry pulse). Its `idf_component.yml` declares `m5stack/m5unified ^0.2` as a **public** dependency, because `icons.h` exposes `M5Canvas`.
-- `firmware/atoms3r/` — the ESP-IDF project for the AtomS3R: `CMakeLists.txt` adds `../../components` via `EXTRA_COMPONENT_DIRS`; `main/main.cpp` holds only board wiring (canvas size, boot rotation and IMU calibration constants, `usb_serial_jtag` transport, `status` reply formatting, `BtnA` screen toggle, the 33 ms loop); `sdkconfig.defaults` carries the two non-defaults (target `esp32s3`, 8 MB flash). Build artefacts (`build/`, `managed_components/`, `sdkconfig`, `.vscode/settings.json`) live here and are gitignored.
+- `firmware/atoms3r/` — the ESP-IDF project for the AtomS3R: `CMakeLists.txt` adds `../../components` via `EXTRA_COMPONENT_DIRS`; `main/main.cpp` holds only board wiring (canvas size, boot rotation and IMU calibration constants, `usb_serial_jtag` transport, `status` reply formatting, `BtnA` screen toggle, the 33 ms loop); `sdkconfig.defaults` carries the two non-defaults (target `esp32s3`, 8 MB flash); `dependencies.lock` pins the M5Unified/M5GFX versions and is tracked. Build artefacts (`build/`, `managed_components/`, `sdkconfig`, `.vscode/settings.json`) live here and are gitignored; `.vscode/c_cpp_properties.json` and `launch.json` are tracked.
 - `host/Monitor-Daemon.ps1` — the host daemon (PowerShell 7): owns the serial port, receives Claude Code hook events as HTTP POSTs on `http://localhost:47831/hook`, keeps one state per session, sends the device the most urgent one, logs to `%LOCALAPPDATA%\claude-monitor\daemon.log`. `host/Install-MonitorDaemon.ps1` registers it as a logon scheduled task ("claude-monitor daemon"). `host/Send-ClaudeState.ps1` is the one-shot sender: through the daemon's `/state/<state>` when it runs, else straight to the port; it is also what the no-daemon command-hook variant calls.
 - `claude-monitor.code-workspace` — multi-root workspace (repo + `firmware/atoms3r`) so the ESP-IDF extension finds a project.
+- `CHANGELOG.md` — one section per release. `.clangd` (strips `-f*`/`-m*` so clangd can read the xtensa compile database) and `.devcontainer/` (the stock `espressif/idf` image; inside it, work from `firmware/atoms3r`) are the only other tracked files besides the article, the README and the license.
 
 A new board = a new `firmware/<board>/` project with its own `sdkconfig.defaults`, `main/main.cpp` and calibration constants, plus a section in the README. Anything that would be duplicated between boards belongs in `monitor-core`.
 
@@ -38,12 +39,25 @@ idf.py fullclean
 Manual end-to-end test (device flashed, monitor closed):
 
 ```powershell
-.\host\Send-ClaudeState.ps1 -State processing -PortName COM5   # also: waiting_user | question | idle | off
+.\host\Send-ClaudeState.ps1 -State processing -PortName COM5   # also: waiting_user | question | error | paused | compacting | idle | off | subagent_start | subagent_stop
 ```
 
 Reading the device's reply to `status`: with the daemon running, `Invoke-RestMethod http://localhost:47831/serial/status` returns the `STATUS` line (and `GET /status` shows sessions and the last state sent). Without the daemon, open `System.IO.Ports.SerialPort` on the port at 115200 with DTR/RTS off, `WriteLine("status")`, then `ReadLine()` until a line containing `STATUS` — boot-log fragments may precede it. Note that in a session where the hooks are active, every tool call that prompts for permission sends `waiting_user` before it runs, so a status read taken from Claude Code will usually report that state rather than the one you set a moment earlier; the daemon log shows the exact sequence.
 
 There are no unit tests and no linter. `.clangd` (repo root) strips `-f*`/`-m*` flags so clangd can parse the xtensa compile database; `firmware/atoms3r/.vscode/settings.json` (gitignored, machine-specific: ESP-IDF setup, clangd binary and `--compile-commands-dir`, COM port) points it at `firmware/atoms3r/build`. `firmware/atoms3r/.vscode/c_cpp_properties.json` is tracked and carries an absolute `compilerPath`.
+
+## Releasing
+
+A version is an annotated tag `vX.Y.Z` on `main` plus a GitHub release with four AtomS3R images. The version embedded in the binary (`esp_app_desc`, printed as `App version:` in the boot log) is `git describe --tags --dirty`, **captured when CMake configures**, not on every build: tag first, make sure the tree is clean, then `idf.py reconfigure build`. A plain `idf.py build` after tagging keeps the previous string (the 1.1.0 assets had to be rebuilt for exactly that reason). Then, in the activated ESP-IDF shell (its venv provides `esptool`):
+
+```powershell
+cd firmware/atoms3r
+python -m esptool --chip esp32s3 merge_bin -o claude-monitor-atoms3r-vX.Y.Z-merged.bin --flash_mode dio --flash_freq 80m --flash_size 8MB 0x0 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0x10000 build/claude-monitor-atoms3r.bin
+Copy-Item build/claude-monitor-atoms3r.bin claude-monitor-atoms3r-vX.Y.Z.bin
+gh release create vX.Y.Z --title "claude-monitor X.Y.Z" --notes-file notes.md claude-monitor-atoms3r-vX.Y.Z-merged.bin claude-monitor-atoms3r-vX.Y.Z.bin build/bootloader/bootloader.bin build/partition_table/partition-table.bin
+```
+
+The flash arguments come from `build/flasher_args.json`. Release notes follow the pattern of the existing releases (what is new on the device, on the host, how to flash without the toolchain, what it was built with); the `CHANGELOG.md` section for the version is written in the commit the tag points to. `gh release upload vX.Y.Z --clobber <files>` replaces assets on an existing release.
 
 ## Architecture
 
@@ -71,3 +85,4 @@ There are no unit tests and no linter. `.clangd` (repo root) strips `-f*`/`-m*` 
 - The USB port can disappear for a few seconds after a reset or re-plug; a flash that fails with "could not open port" usually succeeds on retry. A flash that fails with "port is busy" means the daemon holds it: `POST /release` first.
 - PowerShell: inside a double-quoted string `$name:` is parsed as a scoped variable; write `${name}:`. The daemon script died silently on exactly that once.
 - Claude Code rewrites `~/.claude/settings.json` itself (e.g. when it records a newly allowed directory or permission). A hooks block edited by hand during a live session can be lost in that rewrite; verify with `/hooks` or by re-reading the file, and re-apply if needed.
+- `build/project_description.json` → `project_version` shows which `git describe` the current build carries; if it does not match the tag you are releasing, reconfigure (see Releasing).

@@ -1,5 +1,7 @@
 # A physical traffic light for Claude Code: a status monitor with the M5Stack AtomS3R, VS Code and ESP-IDF
 
+> **Note (September 2026).** This is the original write-up and it is kept as the design rationale. The code in this repository has moved on since: the red STOP sign became an exclamation mark, there are nine states instead of three (a blue question mark, an error cross, an animated hourglass, a grey compacting gear, a subagent satellite), the icons rotate continuously with the tilt, a host daemon receives the hooks over HTTP and tracks several sessions, and the sources are split into a shared component and per-board projects. The [README](README.md) describes the current firmware and hook setup; [CHANGELOG.md](CHANGELOG.md) lists what each release changed.
+
 Anyone who works with Claude Code daily knows the pattern: you kick off a task, switch to another window — email, documentation, another terminal — and keep coming back every thirty seconds to see whether it has finished or is sitting there waiting for your permission. This article shows how to build a small desk device that solves this: a USB monitor that displays a different icon depending on what Claude Code is doing.
 
 - **Spinning yellow gear** — Claude Code is processing your request

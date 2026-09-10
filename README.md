@@ -18,7 +18,9 @@ The three "look at the terminal" signs (red `!`, blue `?`, red `X`) pulse three 
 
 Native **ESP-IDF 5.5** (C++ / CMake / FreeRTOS) with the official VS Code extension. No Arduino, no PlatformIO, no Wi-Fi, no soldering.
 
-> The full write-up — design decisions, geometry of the icons, every gotcha — is in [claude-code-status-monitor-atoms3r.md](claude-code-status-monitor-atoms3r.md). The firmware has evolved since it was written (nine states instead of four, exclamation and question marks instead of "STOP", continuous rotation, an entry pulse, a `status` command, a host daemon with per-session tracking, and a component/board split); this README describes the current code.
+> The full write-up — design decisions, geometry of the icons, every gotcha — is in [claude-code-status-monitor-atoms3r.md](claude-code-status-monitor-atoms3r.md). The firmware has evolved since it was written (nine states instead of four, exclamation and question marks instead of "STOP", continuous rotation, an entry pulse, a `status` command, a host daemon with per-session tracking, and a component/board split); this README describes the current code, and [CHANGELOG.md](CHANGELOG.md) lists what each release added.
+
+In a hurry? Every [release](https://github.com/icefoxj/claude-monitor/releases) ships prebuilt binaries: [flash one](#flashing-a-prebuilt-binary) with `esptool`, then set up [the host daemon](#the-host-daemon) and [the hooks](#claude-code-hooks). Building from source needs the ESP-IDF toolchain and is described in [Build and flash](#build-and-flash).
 
 ## How it works
 
@@ -46,9 +48,20 @@ The daemon is optional: the hooks can also run a one-line script per event that 
 - VS Code with the **ESP-IDF extension** (`espressif.esp-idf-extension`) and ESP-IDF **5.x** installed through it.
 - Install path and project path **without spaces or accents**.
 - Linux: add your user to the serial group (`sudo usermod -aG dialout $USER`, then log out/in).
-- For the daemon: PowerShell 7 (`pwsh`). It ships with the repository as a script; on Linux/macOS `pwsh` runs the same script with `-PortName /dev/ttyACM0` (untested there).
+- For the daemon: PowerShell 7 (`pwsh`). It ships with the repository as a script; on Linux/macOS `pwsh` runs the same script with `-PortName /dev/ttyACM0` (untested there). The installer (`Install-MonitorDaemon.ps1`) is Windows-only, because it registers a scheduled task; elsewhere start the daemon from a user service of your choosing.
+- To flash a prebuilt release instead of building: any Python 3 with `esptool` (`pip install esptool`). No ESP-IDF needed.
 
 [M5Unified](https://components.espressif.com/components/m5stack/m5unified) (and its dependency M5GFX) come from the ESP Component Registry, declared in `components/monitor-core/idf_component.yml`. The first build downloads them into `firmware/atoms3r/managed_components/`. Tested with ESP-IDF 5.5.0, M5Unified 0.2.21 and M5GFX 0.2.28 (see `dependencies.lock`).
+
+## Flashing a prebuilt binary
+
+Each [release](https://github.com/icefoxj/claude-monitor/releases) carries four files for the AtomS3R: `claude-monitor-atoms3r-vX.Y.Z-merged.bin`, a single image with bootloader, partition table and app that goes at offset `0x0`, and the three parts separately (`bootloader.bin` at `0x0`, `partition-table.bin` at `0x8000`, `claude-monitor-atoms3r-vX.Y.Z.bin` at `0x10000`) for anyone who prefers `idf.py`-style flashing. With `esptool` installed:
+
+```
+python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 claude-monitor-atoms3r-vX.Y.Z-merged.bin
+```
+
+The port is `/dev/ttyACM0` on Linux and `/dev/cu.usbmodemXXXX` on macOS. On a board that has never been flashed, hold the side reset button ~2 s to enter download mode first. If the daemon is already running it owns the port: free it with `POST http://localhost:47831/release` (see [Build and flash](#build-and-flash)) and flash within two minutes. The boot log prints the version the image was built from (`App version: v1.1.0`), which is how you check what is on the cube.
 
 ## Build and flash
 
@@ -238,25 +251,29 @@ The repository is laid out to host more than one board. Everything that does not
 ```
 claude-monitor/
 ├── components/monitor-core/        # board-independent: protocol, icons, tilt filter, state machine
-│   ├── include/monitor/*.h
+│   ├── include/monitor/*.h         # protocol.h, tilt.h, icons.h, ui.h
 │   ├── src/*.cpp
 │   └── idf_component.yml           # m5stack/m5unified ^0.2
 ├── firmware/atoms3r/               # ESP-IDF project for the AtomS3R (esp32s3)
 │   ├── CMakeLists.txt              # pulls ../../components in via EXTRA_COMPONENT_DIRS
 │   ├── sdkconfig.defaults          # target esp32s3, 8 MB flash (idf.py save-defconfig)
-│   └── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG
+│   ├── dependencies.lock           # exact M5Unified / M5GFX versions the build was tested with
+│   ├── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG
+│   └── .vscode/                    # c_cpp_properties.json and launch.json (settings.json is not committed)
 ├── host/
 │   ├── Monitor-Daemon.ps1          # the daemon: port owner, HTTP hook receiver, per-session state
-│   ├── Install-MonitorDaemon.ps1   # registers it as a logon scheduled task
+│   ├── Install-MonitorDaemon.ps1   # registers it as a logon scheduled task (Windows)
 │   └── Send-ClaudeState.ps1        # one-shot sender (via the daemon if running, else the port)
 ├── claude-monitor.code-workspace   # VS Code multi-root: repo + firmware/atoms3r
-├── claude-code-status-monitor-atoms3r.md   # full article
+├── claude-code-status-monitor-atoms3r.md   # the original article
+├── CHANGELOG.md                    # what each release changed
 ├── CLAUDE.md                       # guidance for Claude Code working on this repo
 ├── LICENSE                         # CC BY 4.0
+├── .clangd                         # lets clangd read the xtensa compile database
 └── .devcontainer/                  # optional: espressif/idf Docker image
 ```
 
-`firmware/atoms3r/.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port.
+`firmware/atoms3r/.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port. Build output (`build/`, `managed_components/`, `sdkconfig`) is ignored too; `sdkconfig.defaults` is enough to recreate it.
 
 Everything is drawn into an in-RAM canvas (`M5Canvas`, 32 KB on the AtomS3R) and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle.
 
@@ -266,6 +283,8 @@ Everything is drawn into an in-RAM canvas (`M5Canvas`, 32 KB on the AtomS3R) and
 - `Notification` semantics vary between Claude Code versions; if you get a green check where you expected the exclamation sign, that's why.
 - ESP-IDF logs and the protocol share the same USB port. Harmless: the daemon reads and discards the log lines, and only reacts to `STATUS` replies.
 - The daemon must be running for the HTTP hooks to reach anything; when it is not, Claude Code reports the failed hook and carries on. The scheduled task restarts it at logon and after crashes.
+- A manual write through `Send-ClaudeState.ps1` or `POST /state/<state>` bypasses the per-session bookkeeping; the next hook event that changes the aggregate state overrides it.
+- Only the AtomS3R is supported today. The code is split so that a second board (the M5Stack Tab5 is the candidate) is another `firmware/<board>/` project, but none exists yet.
 
 ## License
 
