@@ -63,11 +63,21 @@ constexpr const char* kBoard    = "tab5";
 constexpr const char* kFeatures = "events,touch,rotate,sessions";
 constexpr float kPi = 3.14159265f;
 
-constexpr int kMaxSessions = 6;
-constexpr int kTextBand    = 52;    // px above (name) and below (clock) a tile's icon
-constexpr int kTileGap     = 16;    // px between an icon and the tile's side
-constexpr int kViewW       = 720;   // the inspector canvas on the detail page
-constexpr int kViewH       = 720;
+constexpr int   kMaxSessions = 6;
+constexpr int   kTileGap     = 16;     // px between an icon and the tile's side
+constexpr float kIconScale   = 0.85f;  // the icon takes this much of the room the texts leave
+constexpr int   kViewW       = 720;    // the inspector canvas on the detail page
+constexpr int   kViewH       = 720;
+
+// Name and clock: a bigger face when the tiles are tall, and a text band
+// (above for the name, below for the clock) sized for it
+struct TextStyle { const lgfx::IFont* font; int band; };
+
+TextStyle textStyleFor(int tileHeight){
+    if (tileHeight >= 600) return { &fonts::DejaVu40, 72 };
+    if (tileHeight >= 300) return { &fonts::DejaVu24, 52 };
+    return { &fonts::DejaVu18, 40 };
+}
 
 constexpr uint8_t kBrightness    = 160;
 constexpr uint8_t kDimBrightness = 40;    // while the host's heartbeat is missing
@@ -288,6 +298,7 @@ extern "C" void app_main(void){
     bool  textDirty  = true;
     bool  viewDirty  = true;
     Rect  detailLabel, detailClock;   // text bands on the detail page
+    TextStyle style = textStyleFor(720);   // for the layout on screen
 
     // The tiles on screen: the live sessions, or the placeholder
     auto visibleSlots = [&]() {
@@ -334,18 +345,19 @@ extern "C" void app_main(void){
         placeholder.ui.setVisible(false);
 
         if (view == View::Detail && detail && detail->used){
-            int iconSize, ix, iy;
-            if (landscape){
-                iconSize = 480; ix = 40; iy = 120;
-                inspector.setOrigin(560, 0);
-                detailLabel = { 40, 40, 480, 60 };
-                detailClock = { 40, 620, 480, 60 };
-            } else {
-                iconSize = 400; ix = 160; iy = 80;
-                inspector.setOrigin(0, 560);
-                detailLabel = { 160, 10, 400, 60 };
-                detailClock = { 160, 490, 400, 60 };
-            }
+            // The icon column is 560 wide in landscape (720 tall), 720 wide
+            // and 560 tall in portrait: name band, icon, clock band
+            style = textStyleFor(720);
+            int colX, colY, colW, colH;
+            if (landscape){ colX = 0;  colY = 0;  colW = 560; colH = 720; inspector.setOrigin(560, 0); }
+            else          { colX = 0;  colY = 0;  colW = 720; colH = 560; inspector.setOrigin(0, 560); }
+            int room = colH - 2 * style.band;
+            if (colW - 2 * kTileGap < room) room = colW - 2 * kTileGap;
+            int iconSize = static_cast<int>(room * kIconScale) & ~1;
+            int ix = colX + (colW - iconSize) / 2;
+            int iy = colY + style.band + (colH - 2 * style.band - iconSize) / 2;
+            detailLabel = { colX, colY, colW, style.band };
+            detailClock = { colX, colY + colH - style.band, colW, style.band };
             detail->place(iconSize, ix, iy);
             detail->ui.setVisible(true);
             detail->ui.redraw();
@@ -361,14 +373,15 @@ extern "C" void app_main(void){
             else             { cols = landscape ? 3 : 2; rows = landscape ? 2 : 3; }
             const int tw = W / cols;
             const int th = H / rows;
-            int iconSize = tw - 2 * kTileGap;
-            if (th - 2 * kTextBand < iconSize) iconSize = th - 2 * kTextBand;
-            iconSize &= ~1;
+            style = textStyleFor(th);
+            int room = th - 2 * style.band;
+            if (tw - 2 * kTileGap < room) room = tw - 2 * kTileGap;
+            int iconSize = static_cast<int>(room * kIconScale) & ~1;
             for (int i = 0; i < n; i++){
                 Slot* s = vis[i];
                 s->tile = { (i % cols) * tw, (i / cols) * th, tw, th };
                 int ix = s->tile.x + (tw - iconSize) / 2;
-                int iy = s->tile.y + kTextBand + (th - 2 * kTextBand - iconSize) / 2;
+                int iy = s->tile.y + style.band + (th - 2 * style.band - iconSize) / 2;
                 s->place(iconSize, ix, iy);
                 s->ui.setVisible(true);
                 s->ui.redraw();
@@ -383,16 +396,16 @@ extern "C" void app_main(void){
         if (view == View::Detail && detail){
             clockText(detail->ui.framesInState(), clock, sizeof(clock));
             drawCentred(detail->label.c_str(), detailLabel.x + detailLabel.w / 2, detailLabel.y + detailLabel.h / 2,
-                        detailLabel.w, &fonts::DejaVu24, TFT_WHITE);
+                        detailLabel.w, style.font, TFT_WHITE);
             drawCentred(clock, detailClock.x + detailClock.w / 2, detailClock.y + detailClock.h / 2,
-                        detailClock.w, &fonts::DejaVu24, TFT_LIGHTGREY);
+                        detailClock.w, style.font, TFT_LIGHTGREY);
         } else {
             for (Slot* s : visibleSlots()){
                 clockText(s->ui.framesInState(), clock, sizeof(clock));
-                drawCentred(s->label.c_str(), s->tile.x + s->tile.w / 2, s->tile.y + kTextBand / 2,
-                            s->tile.w, &fonts::DejaVu24, TFT_WHITE);
-                drawCentred(clock, s->tile.x + s->tile.w / 2, s->tile.y + s->tile.h - kTextBand / 2,
-                            s->tile.w, &fonts::DejaVu24, TFT_LIGHTGREY);
+                drawCentred(s->label.c_str(), s->tile.x + s->tile.w / 2, s->tile.y + style.band / 2,
+                            s->tile.w, style.font, TFT_WHITE);
+                drawCentred(clock, s->tile.x + s->tile.w / 2, s->tile.y + s->tile.h - style.band / 2,
+                            s->tile.w, style.font, TFT_LIGHTGREY);
             }
         }
     };
