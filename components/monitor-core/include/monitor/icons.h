@@ -70,6 +70,9 @@ public:
     // Sends the canvas to the display
     void push();
 
+    // Where push() puts the canvas; a board changes it when its layout turns
+    void setOrigin(int pushX, int pushY) { pushX_ = pushX; pushY_ = pushY; }
+
 private:
     struct Pt { float x; float y; };
 

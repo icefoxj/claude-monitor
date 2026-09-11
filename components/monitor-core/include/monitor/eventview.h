@@ -23,6 +23,9 @@ public:
     // clock, for the "12s ago" of each event.
     void draw(const EventLog& log, const char* statusLine, int64_t nowMs);
 
+    // Where the page is pushed; a board changes it when its layout turns
+    void setOrigin(int pushX, int pushY) { pushX_ = pushX; pushY_ = pushY; }
+
 private:
     // Draws `text` wrapped inside `width` pixels from (x, y), at most
     // `maxLines` lines; returns the number of lines drawn

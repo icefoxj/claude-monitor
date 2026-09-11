@@ -18,7 +18,8 @@ $inc     = Join-Path $root 'components\monitor-core\include'
 $sources = @(
     (Join-Path $root 'tests\host\test_core.cpp'),
     (Join-Path $root 'components\monitor-core\src\protocol.cpp'),
-    (Join-Path $root 'components\monitor-core\src\tilt.cpp')
+    (Join-Path $root 'components\monitor-core\src\tilt.cpp'),
+    (Join-Path $root 'components\monitor-core\src\orientation.cpp')
 )
 $exe = Join-Path $build 'test_core.exe'
 

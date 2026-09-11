@@ -35,6 +35,10 @@ $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero)
                  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
+# A running instance keeps the old arguments and blocks the new start
+# (MultipleInstances = IgnoreNew): stop it first
+Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 800
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Write-Host "Registered and started '$taskName' (port $PortName, http://localhost:$HttpPort/)."

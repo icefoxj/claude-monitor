@@ -86,6 +86,7 @@ $script:deviceSubagents = 0       # subagent count the device currently holds
 $script:deviceSessions  = $null   # session codes the device currently shows
 $script:lastPing        = [datetime]::MinValue
 $script:deviceInfo      = $null   # fields of the device's VERSION line, read when the port opens
+$script:lastInfoTry     = [datetime]::MinValue
 $script:started         = Get-Date
 
 function Open-Serial {
@@ -585,6 +586,7 @@ try {
                 $script:deviceState = $null
                 $script:deviceSubagents = 0
                 $script:deviceSessions = $null
+                $script:lastInfoTry = $now
                 Read-DeviceInfo | Out-Null
                 Sync-Device $true
                 if (Send-Serial 'ping') { $script:lastPing = $now }
@@ -594,6 +596,12 @@ try {
         }
         if ($script:serial -and ($now - $script:lastPing).TotalSeconds -ge $PingSeconds) {
             if (Send-Serial 'ping') { $script:lastPing = $now }
+        }
+        # A device that was still booting when the port opened (the Tab5
+        # takes ~2.5 s to bring its panel up) answered nothing: ask again
+        if ($script:serial -and -not $script:deviceInfo -and ($now - $script:lastInfoTry).TotalSeconds -ge 10) {
+            $script:lastInfoTry = $now
+            Read-DeviceInfo | Out-Null
         }
         foreach ($line in (Read-SerialLines)) {
             if ($line -match 'STATUS|VERSION|ERROR') { Log "device: $($line.Trim())" }

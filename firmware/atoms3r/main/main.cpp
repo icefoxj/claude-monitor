@@ -17,14 +17,13 @@
 #include <esp_app_desc.h>
 #include <esp_err.h>
 #include <esp_log.h>
-#include <nvs.h>
-#include <nvs_flash.h>
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
+#include "monitor/calibration.h"
 #include "monitor/icons.h"
 #include "monitor/protocol.h"
 #include "monitor/tilt.h"
@@ -62,48 +61,10 @@ constexpr monitor::TiltConfig kTilt = {
     .angleOffset = 0.0f,
 };
 
-struct Calibration {
-    uint8_t rotation;    // absolute display rotation, 0..3
-    float   sign;        // +1 / -1
-    float   offsetDeg;
-};
-
-constexpr const char* kNvsNamespace = "monitor";
-
-// Returns true when NVS held at least one field
-bool loadCalibration(Calibration& c){
-    nvs_handle_t h;
-    if (nvs_open(kNvsNamespace, NVS_READONLY, &h) != ESP_OK){
-        return false;
-    }
-    bool any = false;
-    uint8_t rot;
-    if (nvs_get_u8(h, "rot", &rot) == ESP_OK){ c.rotation = rot & 3; any = true; }
-    int8_t sign;
-    if (nvs_get_i8(h, "sign", &sign) == ESP_OK){ c.sign = sign < 0 ? -1.0f : 1.0f; any = true; }
-    int32_t mdeg;
-    if (nvs_get_i32(h, "offset_mdeg", &mdeg) == ESP_OK){ c.offsetDeg = mdeg / 1000.0f; any = true; }
-    nvs_close(h);
-    return any;
-}
-
-bool saveCalibration(const Calibration& c, bool reset){
-    nvs_handle_t h;
-    if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) != ESP_OK){
-        return false;
-    }
-    esp_err_t err;
-    if (reset){
-        err = nvs_erase_all(h);
-    } else {
-        err = nvs_set_u8(h, "rot", c.rotation);
-        if (err == ESP_OK) err = nvs_set_i8(h, "sign", c.sign < 0 ? -1 : 1);
-        if (err == ESP_OK) err = nvs_set_i32(h, "offset_mdeg", static_cast<int32_t>(lroundf(c.offsetDeg * 1000.0f)));
-    }
-    if (err == ESP_OK) err = nvs_commit(h);
-    nvs_close(h);
-    return err == ESP_OK;
-}
+// Calibration fields on this board: rotation = absolute display rotation
+// (0..3), sign / offsetDeg = the continuous tilt mapping. Stored in NVS by
+// monitor-core's calibration.h.
+using monitor::Calibration;
 
 // Puts a calibration into effect: display rotation and tilt mapping (redraws)
 void applyCalibration(const Calibration& c, monitor::Ui& ui){
@@ -168,13 +129,8 @@ extern "C" void app_main(void){
     canvas.setColorDepth(16);
     canvas.createSprite(kCanvasSize, kCanvasSize);
 
-    // NVS for the stored calibration (a version mismatch just wipes it)
-    esp_err_t nvsErr = nvs_flash_init();
-    if (nvsErr == ESP_ERR_NVS_NO_FREE_PAGES || nvsErr == ESP_ERR_NVS_NEW_VERSION_FOUND){
-        nvs_flash_erase();
-        nvsErr = nvs_flash_init();
-    }
-    const bool nvsOK = (nvsErr == ESP_OK);
+    // NVS for the stored calibration
+    const bool nvsOK = monitor::initCalibrationStorage();
 
     // Calibration: compiled defaults, then whatever "calibrate" stored
     const Calibration defaults = {
@@ -183,7 +139,7 @@ extern "C" void app_main(void){
         kTilt.angleOffset * 180.0f / kPi,
     };
     Calibration cal = defaults;
-    const bool stored = nvsOK && loadCalibration(cal);
+    const bool stored = nvsOK && monitor::loadCalibration(cal);
     M5.Display.setRotation(cal.rotation);
 
     bool imuOK = M5.Imu.isEnabled();
@@ -274,7 +230,7 @@ extern "C" void app_main(void){
                         if (req.hasSign)     cal.sign      = static_cast<float>(req.sign);
                         if (req.hasOffset)   cal.offsetDeg = req.offsetDeg;
                     }
-                    bool saved = nvsOK && saveCalibration(cal, req.reset);
+                    bool saved = nvsOK && monitor::saveCalibration(cal, req.reset);
                     ESP_LOGI(TAG, "calibration %s: rot=%u sign=%d offset=%.1f (%s)",
                              req.reset ? "reset" : "set", cal.rotation, cal.sign < 0 ? -1 : 1,
                              cal.offsetDeg, saved ? "stored" : "not stored");

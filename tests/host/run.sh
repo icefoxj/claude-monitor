@@ -8,5 +8,6 @@ mkdir -p tests/host/build
     tests/host/test_core.cpp \
     components/monitor-core/src/protocol.cpp \
     components/monitor-core/src/tilt.cpp \
+    components/monitor-core/src/orientation.cpp \
     -o tests/host/build/test_core
 tests/host/build/test_core

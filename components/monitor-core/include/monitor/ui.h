@@ -48,6 +48,9 @@ public:
     // Runtime calibration: replaces the tilt mapping and redraws
     void setTiltConfig(const TiltConfig& cfg);
 
+    // Draws the current frame again (after the board moved the canvas)
+    void redraw() { render(); }
+
     // One accelerometer sample (g). Redraws the static icon once the smoothed
     // angle has moved enough, unless a pulse is running (it redraws anyway)
     void feedAccel(float ax, float ay, float az);

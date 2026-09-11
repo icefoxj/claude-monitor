@@ -44,7 +44,7 @@ The daemon is optional: the hooks can also run a one-line script per event that 
 
 - **M5Stack AtomS3R** — ESP32-S3-PICO-1-N8R8, 8 MB flash, 0.85" 128×128 IPS display, BMI270 IMU, USB-C. That's it.
 - The ESP32-S3 speaks USB natively (USB Serial/JTAG), so the PC sees a virtual serial port and opening it does not reset the board.
-- **M5Stack Tab5** (second build, in progress) — ESP32-P4, 16 MB flash, 32 MB PSRAM, 5" 1280×720 IPS panel with touch, USB-C.
+- **M5Stack Tab5** (second build, in progress) — ESP32-P4, 16 MB flash, 32 MB PSRAM, 5" 1280×720 IPS panel with touch, USB-C on the P4's USB Serial/JTAG (same virtual serial port as the AtomS3R; needs a data cable, not a charge-only one).
 
 ## Requirements
 
@@ -279,7 +279,9 @@ Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over 
 
 ## The Tab5 build (work in progress)
 
-`firmware/tab5/` is the same firmware for the **M5Stack Tab5** (ESP32-P4, 5" 1280×720 touch panel), laid out in landscape: the status icon in a 560 px column on the left, and on the right a **hook inspector** that shows, for the last hook event the daemon forwarded, every field it carried (`session_id`, `cwd`, `transcript_path`, `tool_name`, `tool_input.command`, `notification_type`, `prompt`, …) with a running age, followed by a short history of the previous events. It is meant to answer, on the desk, "what exactly does Claude Code tell the hooks?" before the multi-session mode is designed. A tap on the screen toggles it; the screen dims and switches off with the same rules as the cube. There is no tilt tracking on this board, so `calibrate` answers with an error.
+`firmware/tab5/` is the same firmware for the **M5Stack Tab5** (ESP32-P4, 5" 1280×720 touch panel), laid out in landscape: the status icon in a 560 px column on the left, and on the right a **hook inspector** that shows, for the last hook event the daemon forwarded, every field it carried (`session_id`, `cwd`, `transcript_path`, `tool_name`, `tool_input.command`, `notification_type`, `prompt`, …) with a running age, followed by a short history of the previous events. It is meant to answer, on the desk, "what exactly does Claude Code tell the hooks?" before the multi-session mode is designed. A tap on the screen toggles it; the screen dims and switches off with the same rules as the cube.
+
+The whole display turns with gravity in 90° steps, like a tablet: landscape puts the icon on the left and the inspector on the right, portrait puts the icon on top and the inspector below. A turn has to go 12° past the 45° boundary and hold for half a second before the screen follows, and lying flat keeps the last orientation. Which way the BMI270 maps to the panel is calibrated per unit and stored on the device: hold the Tab5 the way you use it and send `calibrate rot=N` where N is the display rotation that is upright right now (1 or 3 for landscape, 0 or 2 for portrait; just try `rot=1`, and `rot=3` if that is upside down). Then turn it 90°: if the picture turned the wrong way, send `calibrate sign=-1` (the current orientation stays correct). `calibrate reset` returns to the compiled defaults. With the daemon, `POST /calibrate?rot=1` and `POST /calibrate?sign=-1`.
 
 ```
 cd firmware/tab5
@@ -290,7 +292,7 @@ idf.py -p COMx flash
 
 `sdkconfig.defaults` carries what the Tab5 needs: 16 MB flash in QIO mode, PSRAM at 200 MHz (M5GFX refuses the MIPI-DSI panel below that, which in ESP-IDF 5.5 sits behind `CONFIG_IDF_EXPERIMENTAL_FEATURES`), the 256 KB L2 cache, and a larger factory partition. Both canvases (icon 480×480, inspector 720×720) live in PSRAM.
 
-Status: it builds in CI for `esp32p4` and has **not yet run on a Tab5**. Two things are to be confirmed on hardware: that the Tab5's USB-C reaches the ESP32-P4's USB Serial/JTAG (the firmware uses it like the AtomS3R does; the P4 also has a high-speed OTG controller and the port may be wired to that instead, which would need a CDC transport), and that M5GFX brings the panel up with these settings. The daemon side is ready: it streams events to any device whose `VERSION` says `features=events`, which this build does.
+Verified on a Tab5 (ESP32-P4 rev v1.3, ST7121 panel): the USB-C is the P4's USB Serial/JTAG, so it shows up like the AtomS3R does ("USB Serial Device (COMx)", VID 303A PID 1001), `idf.py flash` works without touching any button, opening the port does not reset it, and the daemon recognises the board from its `VERSION` (`features=events,touch`) and starts streaming events to it. Use a data cable: a charge-only one powers the tablet and shows nothing. Still to come: the multi-session mode itself, and driving the cube and the tablet from one daemon at the same time.
 
 ## Project layout
 
