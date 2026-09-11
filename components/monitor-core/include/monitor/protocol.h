@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Serial protocol shared by every board: one command per line, terminated
 // by \n. The transport (USB Serial/JTAG, CDC, ...) is the board's business.
@@ -28,13 +29,19 @@
 //   "version"        -> device replies with one VERSION line: the board the
 //                     firmware was built for, the model M5Unified detected,
 //                     chip, flash, firmware / ESP-IDF / M5Unified versions,
-//                     protocol version, build time, ELF SHA, uptime, reset reason
+//                     protocol version, features, build time, ELF SHA,
+//                     uptime, reset reason
+//   "event <name>\t<key>=<value>\t<key>=<value>..." -> one Claude Code hook
+//                     event with its fields, tab-separated, values already
+//                     trimmed by the host. The host sends these only to a
+//                     board whose VERSION lists "events" in features=; the
+//                     others never see them (a line can be a few KB)
 
 namespace monitor {
 
 // Bumped when words are added: 1 = the 1.0/1.1 set (states, subagents,
-// status); 2 = sessions, ping, calibrate, version
-constexpr int kProtocolVersion = 2;
+// status); 2 = sessions, ping, calibrate, version; 3 = event
+constexpr int kProtocolVersion = 3;
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
@@ -53,13 +60,35 @@ bool isStatic(State s);
 // States redrawn every frame (spinning gears, the running hourglass)
 bool isAnimated(State s);
 
-enum class Command { Unknown, SetState, SubagentStart, SubagentStop, Status, Version, Ping, Sessions, Calibrate };
+enum class Command { Unknown, SetState, SubagentStart, SubagentStop, Status, Version, Ping, Sessions, Calibrate, Event };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;
     State state = State::Off;   // meaningful when kind == SetState
-    std::string arg;            // the rest of the line for Sessions and Calibrate
+    std::string arg;            // the rest of the line for Sessions, Calibrate and Event
 };
+
+// One field of a hook event, as the host sent it
+struct HookField {
+    std::string key;
+    std::string value;
+};
+
+// One Claude Code hook event: its name and every field the host forwarded,
+// in the order the hook JSON had them (nested objects flattened one level
+// by the host, "tool_input.command")
+struct HookEvent {
+    std::string name;
+    std::vector<HookField> fields;
+
+    // Value of a field, or nullptr
+    const char* find(std::string_view key) const;
+};
+
+// Parses the argument of "event": "<name>\t<key>=<value>\t...". Empty
+// tokens are skipped, a token without '=' becomes a key with an empty
+// value. Returns false when there is no name.
+bool parseEventLine(std::string_view arg, HookEvent& out);
 
 // Maps one complete, trimmed line to a command. Unknown lines are ignored.
 ParsedCommand parseCommand(std::string_view line);
@@ -80,8 +109,9 @@ struct CalibrationRequest {
 bool parseCalibration(std::string_view args, CalibrationRequest& out);
 
 // Accumulates bytes into \n-terminated lines. Strips trailing \r and
-// spaces ("processing\r\n" from some senders) and discards anything longer
-// than maxLen as serial garbage.
+// spaces ("processing\r\n" from some senders). A line longer than maxLen
+// is dropped whole, up to and including its newline, so serial garbage or
+// a command meant for a bigger board cannot leave a tail behind.
 class LineParser {
 public:
     explicit LineParser(size_t maxLen = 64) : maxLen_(maxLen) {}
@@ -92,6 +122,7 @@ public:
 private:
     std::string line_;
     size_t maxLen_;
+    bool overflow_ = false;
 };
 
 }  // namespace monitor

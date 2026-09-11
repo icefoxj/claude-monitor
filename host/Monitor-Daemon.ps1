@@ -20,8 +20,16 @@
     for SessionTimeoutMinutes; a processing/compacting session whose
     transcript file has not changed for DeadSessionMinutes is dropped early.
 
+    Every hook event, with all its fields, is also forwarded as one "event"
+    line to a device whose VERSION lists "events" in features= (the Tab5's
+    hook inspector); the AtomS3R never receives them. The last 50 are kept
+    for GET /events, and with -LogEvents each raw payload is appended as
+    one JSON line to EventLogPath (prompts and tool inputs included: mind
+    what ends up in that file).
+
     Endpoints (all on http://localhost:<HttpPort>/):
       POST /hook            Claude Code hook input JSON (any event)
+      GET  /events[?n=20]   the last hook events as the device sees them (tag, line, time)
       POST /state/<state>   write one state straight to the device (tests)
       GET  /serial/<cmd>    write any protocol word; for "status" / "version" returns the reply
       GET  /version         ask the device who it is: board, model, chip, firmware, ESP-IDF, build, uptime, last reset
@@ -41,7 +49,10 @@ param(
     [string]$LogPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\daemon.log"),
     [int]$SessionTimeoutMinutes = 240,
     [int]$DeadSessionMinutes = 15,
-    [int]$PingSeconds = 30
+    [int]$PingSeconds = 30,
+    [switch]$LogEvents,
+    [string]$EventLogPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\hooks.jsonl"),
+    [int]$EventValueMax = 160
 )
 
 $ErrorActionPreference = 'Continue'
@@ -81,6 +92,7 @@ function Open-Serial {
     try {
         $p = [System.IO.Ports.SerialPort]::new($PortName, 115200)
         $p.NewLine      = "`n"
+        $p.Encoding     = [System.Text.Encoding]::UTF8   # event lines carry whatever the hooks carried
         $p.DtrEnable    = $false   # never reset the board on open
         $p.RtsEnable    = $false
         $p.WriteTimeout = 500
@@ -277,6 +289,70 @@ function Sync-Device([bool]$force = $false) {
     }
 }
 
+# ---------------- hook events -> the device's inspector ----------------
+
+$script:events     = [System.Collections.Generic.List[object]]::new()   # last 50 formatted events
+$script:eventsSent = 0
+
+# One value as a single line of at most EventValueMax characters
+function Format-EventValue($v) {
+    if ($null -eq $v) { return '' }
+    $s = if ($v -is [string]) { $v }
+         elseif ($v -is [bool] -or $v -is [ValueType]) { [string]$v }
+         else { $v | ConvertTo-Json -Compress -Depth 6 }
+    $s = $s -replace '[\t\r\n]+', ' '
+    $s = $s -replace '[\x00-\x1F]', ''
+    if ($s.Length -gt $EventValueMax) { $s = $s.Substring(0, $EventValueMax - 3) + '...' }
+    return $s
+}
+
+# "event <name>\tsummary=..\t<key>=<value>..": every top-level field of the
+# hook payload, objects flattened one level ("tool_input.command"), in the
+# order Claude Code sent them
+function Format-EventLine($e, [string]$tag) {
+    $parts = [System.Collections.Generic.List[string]]::new()
+    $parts.Add("summary=$tag")
+    foreach ($p in $e.PSObject.Properties) {
+        $v = $p.Value
+        if ($v -is [System.Management.Automation.PSCustomObject]) {
+            foreach ($q in $v.PSObject.Properties) {
+                $parts.Add("$($p.Name).$($q.Name)=$(Format-EventValue $q.Value)")
+            }
+        } else {
+            $parts.Add("$($p.Name)=$(Format-EventValue $v)")
+        }
+    }
+    $line = "event $([string]$e.hook_event_name)`t" + ($parts -join "`t")
+    if ($line.Length -gt 3800) { $line = $line.Substring(0, 3800) }
+    return $line
+}
+
+function Add-Event([string]$tag, [string]$line) {
+    $script:events.Add([ordered]@{ time = (Get-Date).ToString('HH:mm:ss.fff'); tag = $tag; line = $line })
+    while ($script:events.Count -gt 50) { $script:events.RemoveAt(0) }
+}
+
+# Only a board that asked for them gets event lines: they are long, and a
+# board without the feature would drop them anyway
+function Send-Event([string]$line) {
+    if (-not $script:serial -or -not $script:deviceInfo) { return }
+    if (([string]$script:deviceInfo.features) -notmatch '(^|,)events(,|$)') { return }
+    if (Send-Serial $line) { $script:eventsSent++ }
+}
+
+function Write-EventLog($e) {
+    try {
+        if ((Test-Path $EventLogPath) -and (Get-Item $EventLogPath).Length -gt 20MB) {
+            Move-Item -Force $EventLogPath "$EventLogPath.1"
+        }
+        $obj = [ordered]@{ received = (Get-Date).ToString('o') }
+        foreach ($p in $e.PSObject.Properties) { $obj[$p.Name] = $p.Value }
+        Add-Content -Path $EventLogPath -Value ($obj | ConvertTo-Json -Compress -Depth 10) -Encoding utf8
+    } catch {
+        Log "event log: $($_.Exception.Message)"
+    }
+}
+
 # ---------------- hook events -> states ----------------
 
 function Map-Event($e) {
@@ -314,6 +390,13 @@ function Process-Hook($e) {
     $short = $sid.Substring(0, [Math]::Min(8, $sid.Length))
     $detail = @($e.notification_type, $e.error_type, $e.tool_name, $e.trigger, $e.compact_reason) | Where-Object { $_ } | Select-Object -First 1
     $tag = if ($detail) { "$($e.hook_event_name)/$detail" } else { [string]$e.hook_event_name }
+
+    # Every event goes to the inspector, the ring and the JSON log, mapped or not
+    $eventLine = Format-EventLine $e $tag
+    Add-Event $tag $eventLine
+    Send-Event $eventLine
+    if ($LogEvents) { Write-EventLog $e }
+
     $cmd = Map-Event $e
     if (-not $cmd) {
         Log "hook $tag session=$short : ignored"
@@ -387,6 +470,16 @@ function Handle-Request($ctx) {
         Send-Response $ctx 200 (@{ sent = $c; reply = $reply } | ConvertTo-Json -Compress)
         return
     }
+    if ($path -eq '/events') {
+        $n = 20
+        if ($req.QueryString['n']) { $n = [int]$req.QueryString['n'] }
+        $take = [Math]::Min($n, $script:events.Count)
+        $items = @(if ($take -gt 0) { $script:events.GetRange($script:events.Count - $take, $take) })
+        [array]::Reverse($items)
+        $obj = [ordered]@{ count = $script:events.Count; sent_to_device = $script:eventsSent; events = $items }
+        Send-Response $ctx 200 ($obj | ConvertTo-Json -Depth 4)
+        return
+    }
     if ($path -eq '/version') {
         $reply = Read-DeviceInfo
         $obj = [ordered]@{
@@ -433,6 +526,9 @@ function Handle-Request($ctx) {
             released_until   = $(if ($script:releaseUntil -gt (Get-Date)) { $script:releaseUntil.ToString('s') } else { $null })
             started          = $script:started.ToString('s')
             device_info      = $script:deviceInfo
+            events_kept      = $script:events.Count
+            events_sent      = $script:eventsSent
+            event_log        = $(if ($LogEvents) { $EventLogPath } else { $null })
             device_state     = $script:deviceState
             device_subagents = $script:deviceSubagents
             device_sessions  = $script:deviceSessions

@@ -33,8 +33,9 @@
 
 namespace {
 
-constexpr const char* TAG    = "monitor";
-constexpr const char* kBoard = "atoms3r";
+constexpr const char* TAG       = "monitor";
+constexpr const char* kBoard    = "atoms3r";
+constexpr const char* kFeatures = "";   // icon only: the host must not send event lines here
 constexpr float kPi = 3.14159265f;
 
 constexpr int     kCanvasSize    = 128;   // the whole panel
@@ -125,7 +126,7 @@ void writeLine(const char* msg, int n){
 // Reply to "version": hardware and firmware identification
 void sendVersion(){
     char msg[256];
-    int n = monitor::formatVersionLine(msg, sizeof(msg) - 1, kBoard);
+    int n = monitor::formatVersionLine(msg, sizeof(msg) - 1, kBoard, kFeatures);
     if (n > static_cast<int>(sizeof(msg)) - 2){
         n = sizeof(msg) - 2;   // truncated: still terminate the line
     }
@@ -281,6 +282,7 @@ extern "C" void app_main(void){
                     sendStatus(ui, cal, brightness, ax, ay, az);
                     break;
                 }
+                case monitor::Command::Event:   break;   // not shown on this board (and never sent to it)
                 case monitor::Command::Unknown: break;
             }
         }

@@ -1,6 +1,6 @@
-# Builds the firmware and runs the host tests on every push and pull
-# request. On a version tag it also attaches the AtomS3R images to the
-# GitHub release for that tag and publishes the browser flasher page.
+# Builds every board's firmware and runs the host tests on every push and
+# pull request. On a version tag it also attaches the images to the GitHub
+# release for that tag and publishes the browser flasher page (AtomS3R).
 # Run by hand with a release tag to (re)publish the flasher page for an
 # existing release from its assets.
 name: build
@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: "Existing release tag (e.g. v1.2.0) to publish the web flasher for; leave empty to just build"
+        description: "Existing release tag (e.g. v1.3.0) to publish the web flasher for; leave empty to just build"
         required: false
         default: ""
 
@@ -35,9 +35,17 @@ jobs:
       - name: Build and run
         run: bash tests/host/run.sh
 
-  atoms3r:
-    name: firmware atoms3r
+  firmware:
+    name: firmware ${{ matrix.board }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: atoms3r
+            target: esp32s3
+          - board: tab5
+            target: esp32p4
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,8 +55,8 @@ jobs:
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5
-          target: esp32s3
-          path: firmware/atoms3r
+          target: ${{ matrix.target }}
+          path: firmware/${{ matrix.board }}
 
       - name: Collect the images
         run: |
@@ -56,23 +64,11 @@ jobs:
           VERSION="$(git describe --tags --always)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           pip install --quiet esptool
-          B=firmware/atoms3r/build
-          mkdir -p dist
-          python -m esptool --chip esp32s3 merge_bin \
-            -o "dist/claude-monitor-atoms3r-$VERSION-merged.bin" \
-            --flash_mode dio --flash_freq 80m --flash_size 8MB \
-            0x0 "$B/bootloader/bootloader.bin" \
-            0x8000 "$B/partition_table/partition-table.bin" \
-            0x10000 "$B/claude-monitor-atoms3r.bin"
-          cp "$B/claude-monitor-atoms3r.bin" "dist/claude-monitor-atoms3r-$VERSION.bin"
-          cp "$B/bootloader/bootloader.bin" "$B/partition_table/partition-table.bin" dist/
-          echo "app version embedded in the binary:"
-          grep -a -o -m1 'v[0-9][0-9A-Za-z.+-]*' "$B/claude-monitor-atoms3r.bin" | head -1 || true
-          ls -l dist
+          bash tools/collect-images.sh "firmware/${{ matrix.board }}" "${{ matrix.board }}" "$VERSION" dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: claude-monitor-atoms3r-${{ env.VERSION }}
+          name: claude-monitor-${{ matrix.board }}-${{ env.VERSION }}
           path: dist/
           if-no-files-found: error
 
@@ -84,7 +80,7 @@ jobs:
 
   web-flasher:
     name: web flasher (GitHub Pages)
-    needs: atoms3r
+    needs: firmware
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release != '')
     runs-on: ubuntu-latest
     environment:
@@ -108,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release download "${{ inputs.release }}" --repo "${{ github.repository }}" --dir dist \
-            --pattern 'bootloader.bin' --pattern 'partition-table.bin' --pattern 'claude-monitor-atoms3r-*.bin'
+            --pattern 'claude-monitor-atoms3r-*'
           ls -l dist
 
       # Three parts at their offsets, not the merged image: the merged one
@@ -122,11 +118,15 @@ jobs:
           else
             VERSION="${GITHUB_REF_NAME}"
           fi
-          APP="$(cd dist && ls claude-monitor-atoms3r-*.bin | grep -v -- '-merged' | head -1)"
-          test -n "$APP"
+          cd dist
+          BOOT="$(ls claude-monitor-atoms3r-*-bootloader.bin | head -1)"
+          PT="$(ls claude-monitor-atoms3r-*-partition-table.bin | head -1)"
+          APP="$(ls claude-monitor-atoms3r-*.bin | grep -v -e '-merged' -e '-bootloader' -e '-partition-table' | head -1)"
+          cd ..
+          test -n "$BOOT" && test -n "$PT" && test -n "$APP"
           mkdir -p site
           cp docs/index.html site/
-          cp dist/bootloader.bin dist/partition-table.bin "dist/$APP" site/
+          cp "dist/$BOOT" "dist/$PT" "dist/$APP" site/
           cat > site/manifest.json <<EOF
           {
             "name": "claude-monitor for the M5Stack AtomS3R",
@@ -136,9 +136,9 @@ jobs:
               {
                 "chipFamily": "ESP32-S3",
                 "parts": [
-                  { "path": "bootloader.bin",      "offset": 0 },
-                  { "path": "partition-table.bin", "offset": 32768 },
-                  { "path": "$APP",                "offset": 65536 }
+                  { "path": "$BOOT", "offset": 0 },
+                  { "path": "$PT",   "offset": 32768 },
+                  { "path": "$APP",  "offset": 65536 }
                 ]
               }
             ]

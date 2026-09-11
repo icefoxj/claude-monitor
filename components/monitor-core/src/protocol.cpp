@@ -88,6 +88,11 @@ ParsedCommand parseCommand(std::string_view line){
         cmd.arg = std::string(arg);
         return cmd;
     }
+    if (word == "event"){
+        cmd.kind = Command::Event;
+        cmd.arg = std::string(arg);
+        return cmd;
+    }
     static const State kStates[] = {
         State::Processing, State::WaitingUser, State::Question, State::Error,
         State::Paused, State::Compacting, State::Idle, State::Off,
@@ -152,8 +157,56 @@ bool parseCalibration(std::string_view args, CalibrationRequest& out){
     return out.hasRotation || out.hasSign || out.hasOffset;
 }
 
+const char* HookEvent::find(std::string_view key) const {
+    for (const HookField& f : fields){
+        if (f.key == key){
+            return f.value.c_str();
+        }
+    }
+    return nullptr;
+}
+
+bool parseEventLine(std::string_view arg, HookEvent& out){
+    out = HookEvent{};
+    size_t pos = 0;
+    bool first = true;
+    while (pos <= arg.size()){
+        size_t end = arg.find('\t', pos);
+        if (end == std::string_view::npos){
+            end = arg.size();
+        }
+        std::string_view tok = arg.substr(pos, end - pos);
+        pos = end + 1;
+        if (first){
+            while (!tok.empty() && tok.front() == ' ') tok.remove_prefix(1);
+            while (!tok.empty() && tok.back() == ' ') tok.remove_suffix(1);
+            out.name = std::string(tok);
+            first = false;
+            continue;
+        }
+        if (tok.empty()){
+            continue;
+        }
+        size_t eq = tok.find('=');
+        HookField f;
+        if (eq == std::string_view::npos){
+            f.key = std::string(tok);
+        } else {
+            f.key = std::string(tok.substr(0, eq));
+            f.value = std::string(tok.substr(eq + 1));
+        }
+        out.fields.push_back(std::move(f));
+    }
+    return !out.name.empty();
+}
+
 bool LineParser::feed(char c, std::string& out){
     if (c == '\n'){
+        if (overflow_){
+            overflow_ = false;   // the dropped line ends here
+            line_.clear();
+            return false;
+        }
         while (!line_.empty() && (line_.back() == '\r' || line_.back() == ' ')){
             line_.pop_back();
         }
@@ -161,9 +214,13 @@ bool LineParser::feed(char c, std::string& out){
         line_.clear();
         return true;
     }
+    if (overflow_){
+        return false;   // discarding until the newline
+    }
     line_ += c;
     if (line_.size() > maxLen_){
-        line_.clear();   // protection against serial garbage
+        line_.clear();   // too long for this board: drop the whole line
+        overflow_ = true;
     }
     return false;
 }

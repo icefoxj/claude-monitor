@@ -11,7 +11,8 @@
 param(
     [switch]$Uninstall,
     [string]$PortName = "COM5",
-    [int]$HttpPort = 47831
+    [int]$HttpPort = 47831,
+    [switch]$LogEvents   # also append every raw hook payload to %LOCALAPPDATA%\claude-monitor\hooks.jsonl
 )
 
 $taskName = "claude-monitor daemon"
@@ -26,7 +27,9 @@ if ($Uninstall) {
 $script = Join-Path $PSScriptRoot "Monitor-Daemon.ps1"
 $pwsh   = (Get-Command pwsh).Source
 
-$action    = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`" -PortName $PortName -HttpPort $HttpPort"
+$argument = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`" -PortName $PortName -HttpPort $HttpPort"
+if ($LogEvents) { $argument += " -LogEvents" }
+$action    = New-ScheduledTaskAction -Execute $pwsh -Argument $argument
 $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) `
                  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew

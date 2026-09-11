@@ -51,7 +51,7 @@ void isoBuildTime(const char* date, const char* time, char* out, size_t size){
     }
     int day  = atoi(date + 4);
     int year = atoi(date + 7);
-    snprintf(out, size, "%04d-%02d-%02dT%s", year, month, day, time);
+    snprintf(out, size, "%04d-%02d-%02dT%.8s", year, month, day, time);   // "HH:MM:SS"
 }
 
 }  // namespace
@@ -71,7 +71,7 @@ const char* boardModelName(m5::board_t board){
     }
 }
 
-int formatVersionLine(char* buf, size_t size, const char* board){
+int formatVersionLine(char* buf, size_t size, const char* board, const char* features){
     const esp_app_desc_t* app = esp_app_get_description();
 
     esp_chip_info_t chip;
@@ -83,21 +83,21 @@ int formatVersionLine(char* buf, size_t size, const char* board){
     char sha[9] = {0};
     esp_app_get_elf_sha256(sha, sizeof(sha));
 
-    char built[24];
+    char built[32];
     isoBuildTime(app->date, app->time, built, sizeof(built));
 
     long long uptime = esp_timer_get_time() / 1000000LL;
 
     return snprintf(buf, size,
                     "VERSION board=%s model=%s chip=%s rev=v%d.%d cores=%d flash=%uMB"
-                    " fw=%s idf=%s m5unified=%d.%d.%d protocol=%d project=%s"
+                    " fw=%s idf=%s m5unified=%d.%d.%d protocol=%d features=%s project=%s"
                     " built=%s sha=%s uptime=%lld reset=%s",
                     board, boardModelName(M5.getBoard()), CONFIG_IDF_TARGET,
                     chip.revision / 100, chip.revision % 100, chip.cores,
                     static_cast<unsigned>(flashBytes / (1024u * 1024u)),
                     app->version, app->idf_ver,
                     M5UNIFIED_VERSION_MAJOR, M5UNIFIED_VERSION_MINOR, M5UNIFIED_VERSION_PATCH,
-                    kProtocolVersion, app->project_name,
+                    kProtocolVersion, (features && features[0]) ? features : "-", app->project_name,
                     built, sha, uptime, resetName(esp_reset_reason()));
 }
 

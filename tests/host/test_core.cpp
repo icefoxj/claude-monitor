@@ -64,10 +64,19 @@ void testLineParser(){
     CHECK(feedAll(p, "\n", lines) == "");
     CHECK(lines == 1);
 
-    // Anything over 64 bytes is dropped as garbage
+    // Anything over 64 bytes is dropped whole, newline included, and the
+    // next line is parsed normally
     std::string longLine(65, 'x');
-    CHECK(feedAll(p, longLine + "\n", lines) == "");
+    feedAll(p, longLine + "\n", lines);
+    CHECK(lines == 0);
     CHECK(feedAll(p, std::string(64, 'y') + "\n", lines) == std::string(64, 'y'));
+    CHECK(lines == 1);
+    feedAll(p, std::string(3000, 'e') + "\nidle\n", lines);   // an event line meant for a bigger board
+    CHECK(lines == 1);
+
+    // A board that shows events uses a bigger limit
+    LineParser big(4096);
+    CHECK(feedAll(big, std::string(3000, 'e') + "\n", lines) == std::string(3000, 'e'));
 
     // Bytes before a newline are kept across feeds
     std::string out;
@@ -112,7 +121,11 @@ void testParseCommand(){
     CHECK(parseCommand("status").kind == Command::Status);
     CHECK(parseCommand("version").kind == Command::Version);
     CHECK(parseCommand("version").arg == "");
-    CHECK(kProtocolVersion == 2);
+    CHECK(kProtocolVersion == 3);
+
+    ParsedCommand ev = parseCommand("event PostToolUse\tsummary=PostToolUse/Bash\tsession_id=abc");
+    CHECK(ev.kind == Command::Event);
+    CHECK(ev.arg == "PostToolUse\tsummary=PostToolUse/Bash\tsession_id=abc");
     CHECK(parseCommand("ping").kind == Command::Ping);
     CHECK(parseCommand("subagent_start").kind == Command::SubagentStart);
     CHECK(parseCommand("subagent_stop").kind == Command::SubagentStop);
@@ -170,6 +183,32 @@ void testCalibration(){
     CHECK(!parseCalibration("rot", r));
     CHECK(!parseCalibration("foo=1", r));
     CHECK(!parseCalibration("rot=1 foo=1", r));   // one bad field rejects the whole line
+}
+
+void testEventLine(){
+    HookEvent e;
+    CHECK(parseEventLine("PostToolUse\tsummary=PostToolUse/Bash\tsession_id=33db5bf1\ttool_input.command=git status\tflag", e));
+    CHECK(e.name == "PostToolUse");
+    CHECK(e.fields.size() == 4);
+    CHECK(e.fields[0].key == "summary" && e.fields[0].value == "PostToolUse/Bash");
+    CHECK(e.fields[2].key == "tool_input.command" && e.fields[2].value == "git status");
+    CHECK(e.fields[3].key == "flag" && e.fields[3].value == "");
+    CHECK(std::string(e.find("session_id")) == "33db5bf1");
+    CHECK(e.find("missing") == nullptr);
+
+    // Values keep their own '=' signs and spaces
+    CHECK(parseEventLine("UserPromptSubmit\tprompt=a = b and c", e));
+    CHECK(e.fields[0].value == "a = b and c");
+
+    // Name only, name with stray spaces, empty tokens
+    CHECK(parseEventLine("Stop", e));
+    CHECK(e.name == "Stop" && e.fields.empty());
+    CHECK(parseEventLine(" Stop \t\tx=1\t", e));
+    CHECK(e.name == "Stop" && e.fields.size() == 1);
+
+    // No name: rejected
+    CHECK(!parseEventLine("", e));
+    CHECK(!parseEventLine("\tx=1", e));
 }
 
 void testWrapAngle(){
@@ -238,6 +277,7 @@ int main(){
     testStates();
     testParseCommand();
     testCalibration();
+    testEventLine();
     testWrapAngle();
     testTilt();
     std::printf("%d checks, %d failures\n", checks, failures);

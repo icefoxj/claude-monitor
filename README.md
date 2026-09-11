@@ -1,6 +1,6 @@
 # claude-monitor
 
-A physical traffic light for [Claude Code](https://claude.com/claude-code), built on the **M5Stack AtomS3R**. Claude Code's hooks report every lifecycle event to a small daemon on your machine; the daemon keeps the USB serial port open and tells the 128×128 display what Claude is doing, so you can stop tabbing back every thirty seconds.
+A physical traffic light for [Claude Code](https://claude.com/claude-code), built on the **M5Stack AtomS3R**. Claude Code's hooks report every lifecycle event to a small daemon on your machine; the daemon keeps the USB serial port open and tells the 128×128 display what Claude is doing, so you can stop tabbing back every thirty seconds. A second build for the **M5Stack Tab5** (5" screen) adds a hook inspector next to the icon; it is [work in progress](#the-tab5-build-work-in-progress).
 
 | Icon | Meaning | Claude Code hook event |
 |---|---|---|
@@ -36,7 +36,7 @@ The Anthropic API does not expose session state, so the device cannot poll. Inst
 └──────────────┘                      └──────────────┘                  └──────────────┘
 ```
 
-Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat: the daemon sends one every 30 s, and once the device has seen a ping, a minute of silence means the host is gone. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Two words make the device talk back: `status` answers with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=… fw=… board=… sign=… offset=… sessions=… link=… work=… screen=…`) for calibration and debugging, and `version` answers with one `VERSION` line that identifies the hardware and the firmware: the board the firmware was built for, the model M5Unified detected, chip and revision, flash size, firmware version, ESP-IDF and M5Unified versions, protocol version, build time, ELF SHA prefix, uptime and the reason for the last reset.
+Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat: the daemon sends one every 30 s, and once the device has seen a ping, a minute of silence means the host is gone. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Two words make the device talk back: `status` answers with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=… fw=… board=… sign=… offset=… sessions=… link=… work=… screen=…`) for calibration and debugging, and `version` answers with one `VERSION` line that identifies the hardware and the firmware: the board the firmware was built for, the model M5Unified detected, chip and revision, flash size, firmware version, ESP-IDF and M5Unified versions, protocol version, what the build can show beyond the icon (`features=`), build time, ELF SHA prefix, uptime and the reason for the last reset. One more word exists for boards that list `events` among their features: `event <name>` followed by tab-separated `key=value` pairs carries a whole hook event, every field the hook delivered, for the Tab5's inspector. The daemon reads `features` before sending any; the AtomS3R never receives them.
 
 The daemon is optional: the hooks can also run a one-line script per event that writes to the port directly (see [Without the daemon](#without-the-daemon)). The daemon is better in every way that matters: no process start-up per event, a single writer on the port, events delivered in order, a log with timestamps, and per-session tracking.
 
@@ -44,6 +44,7 @@ The daemon is optional: the hooks can also run a one-line script per event that 
 
 - **M5Stack AtomS3R** — ESP32-S3-PICO-1-N8R8, 8 MB flash, 0.85" 128×128 IPS display, BMI270 IMU, USB-C. That's it.
 - The ESP32-S3 speaks USB natively (USB Serial/JTAG), so the PC sees a virtual serial port and opening it does not reset the board.
+- **M5Stack Tab5** (second build, in progress) — ESP32-P4, 16 MB flash, 32 MB PSRAM, 5" 1280×720 IPS panel with touch, USB-C.
 
 ## Requirements
 
@@ -59,10 +60,10 @@ The daemon is optional: the hooks can also run a one-line script per event that 
 
 The quickest way is the **[web flasher](https://icefoxj.github.io/claude-monitor/)**, a page published from this repository that writes the latest release to the board through the browser's Web Serial (Chrome and Edge; Firefox and Safari have no Web Serial). Plug the AtomS3R in, click, pick the port. The conditions below apply there too: download mode on a board that was never flashed, and the daemon must release the port first.
 
-Without a browser, each [release](https://github.com/icefoxj/claude-monitor/releases) carries four files for the AtomS3R: the three parts (`bootloader.bin` for `0x0`, `partition-table.bin` for `0x8000`, `claude-monitor-atoms3r-vX.Y.Z.bin` for `0x10000`) and `claude-monitor-atoms3r-vX.Y.Z-merged.bin`, a single image of all three for offset `0x0`. With `esptool` installed:
+Without a browser, each [release](https://github.com/icefoxj/claude-monitor/releases) carries four files per board: the three parts (`…-bootloader.bin` for `0x0`, `…-partition-table.bin` for `0x8000`, `claude-monitor-atoms3r-vX.Y.Z.bin` for `0x10000`) and `claude-monitor-atoms3r-vX.Y.Z-merged.bin`, a single image of all three for offset `0x0`. (Releases up to 1.2.0 named the first two plainly `bootloader.bin` and `partition-table.bin`.) With `esptool` installed:
 
 ```
-python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 bootloader.bin 0x8000 partition-table.bin 0x10000 claude-monitor-atoms3r-vX.Y.Z.bin
+python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 claude-monitor-atoms3r-vX.Y.Z-bootloader.bin 0x8000 claude-monitor-atoms3r-vX.Y.Z-partition-table.bin 0x10000 claude-monitor-atoms3r-vX.Y.Z.bin
 ```
 
 or the same command with `0x0 claude-monitor-atoms3r-vX.Y.Z-merged.bin` as the only file. The difference: the three parts leave the NVS partition alone, so a [calibration stored on the device](#calibrating-auto-rotation) survives; the merged image pads the gap between the partition table and the app with `0xFF` and wipes it (which is also the way to get a blank device).
@@ -153,6 +154,8 @@ A Claude Code killed without a `SessionEnd` (terminal closed the hard way, machi
 
 The log at `%LOCALAPPDATA%\claude-monitor\daemon.log` has one line per event with a millisecond timestamp, which is how you find out where time goes when an icon seems late.
 
+Every hook event is also turned into one `event` line with all its fields (nested objects flattened one level, values cut at 160 characters) and sent to a device that declared `features=events`, the Tab5. The last 50 of those lines stay in memory, `GET /events?n=20` returns them newest first, which is a quick way to see what Claude Code delivers to the hooks without any device. Start the daemon with `-LogEvents` and it also appends each raw payload, untrimmed, as one JSON line to `%LOCALAPPDATA%\claude-monitor\hooks.jsonl` (`Install-MonitorDaemon.ps1 -LogEvents` registers it that way). Prompts and tool inputs land in that file, so treat it as you would a transcript.
+
 Endpoints, all on `http://localhost:47831/`:
 
 | Route | Use |
@@ -160,6 +163,7 @@ Endpoints, all on `http://localhost:47831/`:
 | `POST /hook` | what the hooks call; body is Claude Code's hook JSON |
 | `GET /status` | daemon state, sessions (state, project folder, last event), what the device was last told, the device's `VERSION` fields read when the port was opened |
 | `GET /version` | asks the device for its `VERSION` line and returns it raw and parsed, plus the daemon's script path and start time |
+| `GET /events?n=20` | the last hook events as `event` lines (time, tag, line), newest first, and how many were sent to the device |
 | `GET /serial/status` | asks the device for its `STATUS` line and returns it |
 | `POST /state/<state>` | writes one state to the device (what `Send-ClaudeState.ps1` uses) |
 | `POST /calibrate?rot=1&sign=-1&offset=0` | stores the orientation calibration on the device (any subset) and returns its `STATUS`; `?reset=1` restores the compiled defaults |
@@ -273,22 +277,41 @@ Invoke-RestMethod -Method Post 'http://localhost:47831/calibrate?reset=1'       
 
 Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over the port. The device applies the values at once, stores them in flash (the NVS partition, so they survive reboots and any flash that writes the three parts at their offsets: `idf.py flash`, the web flasher, esptool with three files; the merged image erases them), and answers with its `STATUS` line, where `rot=`, `sign=` and `offset=` show what is in effect. The boot log says which set is in use: `(from nvs)` or `(compiled)`. To check, stand the cube on a side, read `angle=` from `http://localhost:47831/serial/status` and compare it with what looks upright. The angle is held while the cube lies flat (`|az| > 0.80 g`) or the tilt is too small to be reliable (in-plane component below 0.40 g), so a cube resting on a desk never twitches.
 
+## The Tab5 build (work in progress)
+
+`firmware/tab5/` is the same firmware for the **M5Stack Tab5** (ESP32-P4, 5" 1280×720 touch panel), laid out in landscape: the status icon in a 560 px column on the left, and on the right a **hook inspector** that shows, for the last hook event the daemon forwarded, every field it carried (`session_id`, `cwd`, `transcript_path`, `tool_name`, `tool_input.command`, `notification_type`, `prompt`, …) with a running age, followed by a short history of the previous events. It is meant to answer, on the desk, "what exactly does Claude Code tell the hooks?" before the multi-session mode is designed. A tap on the screen toggles it; the screen dims and switches off with the same rules as the cube. There is no tilt tracking on this board, so `calibrate` answers with an error.
+
+```
+cd firmware/tab5
+idf.py set-target esp32p4
+idf.py build
+idf.py -p COMx flash
+```
+
+`sdkconfig.defaults` carries what the Tab5 needs: 16 MB flash in QIO mode, PSRAM at 200 MHz (M5GFX refuses the MIPI-DSI panel below that, which in ESP-IDF 5.5 sits behind `CONFIG_IDF_EXPERIMENTAL_FEATURES`), the 256 KB L2 cache, and a larger factory partition. Both canvases (icon 480×480, inspector 720×720) live in PSRAM.
+
+Status: it builds in CI for `esp32p4` and has **not yet run on a Tab5**. Two things are to be confirmed on hardware: that the Tab5's USB-C reaches the ESP32-P4's USB Serial/JTAG (the firmware uses it like the AtomS3R does; the P4 also has a high-speed OTG controller and the port may be wired to that instead, which would need a CDC transport), and that M5GFX brings the panel up with these settings. The daemon side is ready: it streams events to any device whose `VERSION` says `features=events`, which this build does.
+
 ## Project layout
 
 The repository is laid out to host more than one board. Everything that does not depend on the hardware is an ESP-IDF component; each board is a small ESP-IDF project that wires that component to its panel, IMU, buttons and USB.
 
 ```
 claude-monitor/
-├── components/monitor-core/        # board-independent: protocol, icons, tilt filter, state machine
-│   ├── include/monitor/*.h         # protocol.h, tilt.h, icons.h, ui.h
+├── components/monitor-core/        # board-independent: protocol, icons, tilt filter, state machine, hook inspector
+│   ├── include/monitor/*.h         # protocol.h, tilt.h, icons.h, ui.h, version.h, eventlog.h, eventview.h
 │   ├── src/*.cpp
 │   └── idf_component.yml           # m5stack/m5unified ^0.2
 ├── firmware/atoms3r/               # ESP-IDF project for the AtomS3R (esp32s3)
 │   ├── CMakeLists.txt              # pulls ../../components in via EXTRA_COMPONENT_DIRS
 │   ├── sdkconfig.defaults          # target esp32s3, 8 MB flash (idf.py save-defconfig)
 │   ├── dependencies.lock           # exact M5Unified / M5GFX versions the build was tested with
-│   ├── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG
+│   ├── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG, NVS calibration
 │   └── .vscode/                    # c_cpp_properties.json and launch.json (settings.json is not committed)
+├── firmware/tab5/                  # ESP-IDF project for the Tab5 (esp32p4): icon + hook inspector, work in progress
+│   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz
+│   └── main/main.cpp
+├── tools/collect-images.sh         # names and merges a build's images for a release (used by CI)
 ├── host/
 │   ├── Monitor-Daemon.ps1          # the daemon: port owner, HTTP hook receiver, per-session state
 │   ├── Install-MonitorDaemon.ps1   # registers it as a logon scheduled task (Windows)
@@ -313,7 +336,7 @@ Everything is drawn into an in-RAM canvas (`M5Canvas`, 32 KB on the AtomS3R) and
 
 The board-independent code with no display dependency (`protocol.cpp`, `tilt.cpp`) has host tests in `tests/host/`: plain C++17, no framework. `tests/host/run.sh` builds and runs them on Linux/macOS with any `g++` or `clang++`; `tests/host/run.ps1` does it on Windows with MSVC (found through `vswhere`) or a C++17 `g++`. They cover the line parser, every protocol word, the `calibrate` syntax and the tilt filter, including its wrap-around. The icons and the state machine need an `M5Canvas`, so they are checked on the hardware.
 
-GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds the AtomS3R firmware with ESP-IDF 5.5 on every push and pull request, keeping the four images as a workflow artifact. On a version tag it also attaches them to the GitHub release for that tag and publishes the web flasher page with the three parts and their ESP Web Tools manifest. The workflow can also be run by hand with a release tag to republish the flasher page from that release's assets.
+GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds both firmwares (AtomS3R on `esp32s3`, Tab5 on `esp32p4`) with ESP-IDF 5.5 on every push and pull request, keeping each board's four images as a workflow artifact (`tools/collect-images.sh` names and merges them from the build's own flash arguments). On a version tag it also attaches them to the GitHub release for that tag and publishes the web flasher page with the AtomS3R's three parts and their ESP Web Tools manifest. The workflow can also be run by hand with a release tag to republish the flasher page from that release's assets.
 
 ## Known limitations
 

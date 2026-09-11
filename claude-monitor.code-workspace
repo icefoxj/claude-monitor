@@ -1,7 +1,8 @@
 {
   "folders": [
     { "name": "claude-monitor", "path": "." },
-    { "name": "firmware: atoms3r", "path": "firmware/atoms3r" }
+    { "name": "firmware: atoms3r", "path": "firmware/atoms3r" },
+    { "name": "firmware: tab5", "path": "firmware/tab5" }
   ],
   "settings": {}
 }
