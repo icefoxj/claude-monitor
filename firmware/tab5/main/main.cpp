@@ -86,7 +86,9 @@ constexpr int kViewRefreshFrames = 30;
 // rotation = the display rotation shown while gravity sector 0 is down,
 // sign = which way the rotation follows the sector. "calibrate rot=N"
 // means "N is upright the way I am holding it now"; the offset is derived.
-constexpr int kDefaultOffset = 1;
+// Verified on one Tab5: sector 0 (gravity along +x, the tablet on its
+// stand) is rotation 3, and the rotation follows the sector directly.
+constexpr int kDefaultOffset = 3;
 constexpr int kDefaultSign   = 1;
 
 // Both canvases live in PSRAM: 480x480x2 = 450 KB, 720x720x2 = 1 MB
