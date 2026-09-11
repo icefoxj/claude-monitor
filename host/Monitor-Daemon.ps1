@@ -20,6 +20,14 @@
     for SessionTimeoutMinutes; a processing/compacting session whose
     transcript file has not changed for DeadSessionMinutes is dropped early.
 
+    Claude Code has no hook for the moment a permission is approved. The
+    daemon learns each session's claude.exe from the hook's TCP connection
+    and watches WMI process events: a tool process starting under a
+    waiting session means "approved" (processing at once, not when the
+    tool ends), a tool process alive means "tool running" (tool_start /
+    tool_stop, a blue dot on the device), and the session's process going
+    away means the session is dead.
+
     Every hook event, with all its fields, is also forwarded as one "event"
     line to a device whose VERSION lists "events" in features= (the Tab5's
     hook inspector); the AtomS3R never receives them. The line also names
@@ -88,6 +96,7 @@ $script:nextOpenTry     = [datetime]::MinValue
 $script:deviceState     = $null   # last state written to the device
 $script:deviceSubagents = 0       # subagent count the device currently holds
 $script:deviceSessions  = $null   # session codes the device currently shows
+$script:deviceTool      = $false  # the device shows the tool-running dot
 $script:lastPing        = [datetime]::MinValue
 $script:deviceInfo      = $null   # fields of the device's VERSION line, read when the port opens
 $script:lastInfoTry     = [datetime]::MinValue
@@ -233,13 +242,107 @@ function Get-ProjectName([string]$root) {
     return Split-Path -Leaf ($root -replace '[\\/]+$', '')
 }
 
+# ---------------- Claude Code processes ----------------
+#
+# There is no hook for the moment a permission is approved: the red sign
+# would stay until the tool finished. But the tool runs as a child process
+# of the session's claude.exe, and that process is known: the hook's HTTP
+# connection names it (Get-NetTCPConnection, once per session). WMI process
+# events then show a tool starting under it (= approved, and "tool running"
+# for the blue dot), ending, and the session's own process going away.
+
+$script:procEvents = $false
+$IgnoredChildren = @('conhost.exe')
+
+function Register-ProcessEvents {
+    try {
+        Register-CimIndicationEvent -Query "SELECT * FROM __InstanceCreationEvent WITHIN 0.5 WHERE TargetInstance ISA 'Win32_Process'" `
+            -SourceIdentifier 'monitor-proc-start' -ErrorAction Stop | Out-Null
+        Register-CimIndicationEvent -Query "SELECT * FROM __InstanceDeletionEvent WITHIN 0.5 WHERE TargetInstance ISA 'Win32_Process'" `
+            -SourceIdentifier 'monitor-proc-end' -ErrorAction Stop | Out-Null
+        $script:procEvents = $true
+        Log "processes: watching process start/end events (approval detection on)"
+    } catch {
+        Log "processes: cannot subscribe to WMI process events, approval detection off: $($_.Exception.Message)"
+    }
+}
+
+function Unregister-ProcessEvents {
+    foreach ($id in 'monitor-proc-start', 'monitor-proc-end') {
+        Unregister-Event -SourceIdentifier $id -ErrorAction SilentlyContinue
+    }
+}
+
+# The process on the other end of a hook request: the claude.exe of the
+# session. Only valid while the request is being handled (the connection
+# is closed right after the response).
+function Resolve-ClientPid($req) {
+    try {
+        $port = [int]$req.RemoteEndPoint.Port
+        $c = Get-NetTCPConnection -LocalPort $port -RemotePort $HttpPort -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($c -and $c.OwningProcess -gt 0) { return [int]$c.OwningProcess }
+    } catch {}
+    return 0
+}
+
+function Test-ProcessAlive([int]$processId) {
+    if ($processId -le 0) { return $false }
+    return $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)
+}
+
+# Applies the queued process events to the sessions; returns true when
+# something the device shows may have changed
+function Update-ProcessEvents {
+    if (-not $script:procEvents) { return $false }
+    $changed = $false
+    foreach ($ev in @(Get-Event -SourceIdentifier 'monitor-proc-start' -ErrorAction SilentlyContinue)) {
+        $ti = $ev.SourceEventArgs.NewEvent.TargetInstance
+        Remove-Event -EventIdentifier $ev.EventIdentifier -ErrorAction SilentlyContinue
+        if (-not $ti -or [string]$ti.Name -in $IgnoredChildren) { continue }
+        $parent = [int]$ti.ParentProcessId
+        foreach ($s in $script:sessions.Values) {
+            if ($s.pid -le 0 -or $s.pid -ne $parent) { continue }
+            $s.tools[[int]$ti.ProcessId] = [string]$ti.Name
+            if ($s.state -eq 'waiting_user') {
+                $s.state = 'processing'
+                $s.last  = Get-Date
+                Log "session $($s.short): tool $($ti.Name) started under pid ${parent}: approved -> processing"
+            } else {
+                Log "session $($s.short): tool $($ti.Name) started (pid $($ti.ProcessId))"
+            }
+            $changed = $true
+        }
+    }
+    foreach ($ev in @(Get-Event -SourceIdentifier 'monitor-proc-end' -ErrorAction SilentlyContinue)) {
+        $ti = $ev.SourceEventArgs.NewEvent.TargetInstance
+        Remove-Event -EventIdentifier $ev.EventIdentifier -ErrorAction SilentlyContinue
+        if (-not $ti) { continue }
+        $gone = [int]$ti.ProcessId
+        foreach ($s in $script:sessions.Values) {
+            if ($s.tools.ContainsKey($gone)) {
+                Log "session $($s.short): tool $($s.tools[$gone]) ended (pid $gone)"
+                $s.tools.Remove($gone)
+                $changed = $true
+            }
+            if ($s.pid -gt 0 -and $s.pid -eq $gone) {
+                $s.dead = $true
+                $changed = $true
+            }
+        }
+    }
+    return $changed
+}
+
 # ---------------- sessions ----------------
 
-$script:sessions = @{}   # session_id -> @{ state; subagents; last; transcript; root; project }
+$script:sessions = @{}   # session_id -> @{ state; subagents; last; transcript; root; project; pid; tools; dead; short }
 
 function Get-Session([string]$id) {
     if (-not $script:sessions.ContainsKey($id)) {
-        $script:sessions[$id] = @{ state = 'idle'; subagents = 0; last = (Get-Date); transcript = $null; root = $null; project = $null }
+        $script:sessions[$id] = @{
+            state = 'idle'; subagents = 0; last = (Get-Date); transcript = $null; root = $null; project = $null
+            pid = 0; tools = @{}; dead = $false; short = $id.Substring(0, [Math]::Min(8, $id.Length))
+        }
     }
     return $script:sessions[$id]
 }
@@ -260,7 +363,13 @@ function Expire-Sessions {
             Log "session ${id}: expired after $SessionTimeoutMinutes min without events"
             continue
         }
-        if ($s.state -in 'processing', 'compacting' -and $s.transcript -and $s.last -lt $dead) {
+        # The exact signal when the process is known: it is gone
+        if ($s.dead -or ($s.pid -gt 0 -and -not (Test-ProcessAlive $s.pid))) {
+            $script:sessions.Remove($id)
+            Log "session ${id}: dropped, its Claude Code process (pid $($s.pid)) is gone"
+            continue
+        }
+        if ($s.pid -le 0 -and $s.state -in 'processing', 'compacting' -and $s.transcript -and $s.last -lt $dead) {
             $stale = $false
             try {
                 if (-not (Test-Path -LiteralPath $s.transcript)) { $stale = $true }
@@ -309,7 +418,10 @@ function Sync-Device([bool]$force = $false) {
         if (Send-Serial $eff) {
             Log "device <- $eff"
             $script:deviceState = $eff
-            if ($eff -in 'idle', 'off', 'error', 'paused') { $script:deviceSubagents = 0 }   # the firmware resets too
+            if ($eff -in 'idle', 'off', 'error', 'paused') {   # the firmware resets too
+                $script:deviceSubagents = 0
+                $script:deviceTool = $false
+            }
         }
     }
 
@@ -332,6 +444,19 @@ function Sync-Device([bool]$force = $false) {
         if (Send-Serial $line) {
             Log "device <- $line"
             $script:deviceSessions = $codes
+        }
+    }
+
+    # Blue dot: a tool process is running in the session the device is showing
+    $tool = $false
+    foreach ($s in $script:sessions.Values) {
+        if ($s.state -eq $eff -and $s.tools.Count -gt 0) { $tool = $true; break }
+    }
+    if ($force -or $tool -ne $script:deviceTool) {
+        $line = if ($tool) { 'tool_start' } else { 'tool_stop' }
+        if (Send-Serial $line) {
+            Log "device <- $line"
+            $script:deviceTool = $tool
         }
     }
 }
@@ -409,8 +534,10 @@ function Map-Event($e) {
     switch ([string]$e.hook_event_name) {
         'SessionStart'     { return 'idle' }
         'UserPromptSubmit' { return 'processing' }
-        'PreToolUse'       { if ([string]$e.tool_name -eq 'AskUserQuestion') { return 'question' }; return $null }
+        'PreToolUse'       { if ([string]$e.tool_name -eq 'AskUserQuestion') { return 'question' }; return 'processing' }
         'PostToolUse'      { return 'processing' }
+        'PostToolUseFailure' { return 'processing' }   # a failed tool: Claude carries on
+        'PostToolBatch'    { return 'processing' }   # a batch of parallel tools resolved, next model call
         'Notification' {
             switch -Regex ([string]$e.notification_type) {
                 '^(permission_prompt|quota_auto_resume_stale)$'                   { return 'waiting_user' }
@@ -435,7 +562,7 @@ function Map-Event($e) {
     return $null
 }
 
-function Process-Hook($e, [string]$rootHeader) {
+function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
     $sid   = if ($e.session_id) { [string]$e.session_id } else { 'unknown' }
     $short = $sid.Substring(0, [Math]::Min(8, $sid.Length))
     $detail = @($e.notification_type, $e.error_type, $e.tool_name, $e.trigger, $e.compact_reason) | Where-Object { $_ } | Select-Object -First 1
@@ -470,7 +597,18 @@ function Process-Hook($e, [string]$rootHeader) {
             'subagent_stop'  { if ($s.subagents -gt 0) { $s.subagents-- } }
             default          { $s.state = $cmd }
         }
+        # Any activity from a session that was waiting means the permission went through
+        if ($cmd -in 'subagent_start', 'subagent_stop' -and $s.state -eq 'waiting_user') { $s.state = 'processing' }
         $s.last = Get-Date
+        if ($clientPid -gt 0 -and $clientPid -ne $s.pid) {
+            $s.pid  = $clientPid
+            $s.dead = $false
+            Log "session ${short}: Claude Code process pid $clientPid"
+        }
+        if ($e.hook_event_name -in 'PostToolUse', 'PostToolUseFailure' -and $s.tools.Count -gt 0) {
+            # The tool is over: forget its processes even if WMI has not reported them yet
+            foreach ($t in @($s.tools.Keys)) { if (-not (Test-ProcessAlive $t)) { $s.tools.Remove($t) } }
+        }
         if ($e.transcript_path) { $s.transcript = [string]$e.transcript_path }
         if ($root -and ($rootHeader -or -not $s.root)) {
             $s.root    = $root
@@ -507,7 +645,14 @@ function Handle-Request($ctx) {
         try {
             $e = $body | ConvertFrom-Json
             $rootHeader = [string]$req.Headers['X-Claude-Project']
-            Process-Hook $e $rootHeader
+            # The client process, looked up only while the session has none (or a dead one)
+            $clientPid = 0
+            $sid = [string]$e.session_id
+            if ($sid) {
+                $known = if ($script:sessions.ContainsKey($sid)) { $script:sessions[$sid] } else { $null }
+                if (-not $known -or $known.pid -le 0 -or -not (Test-ProcessAlive $known.pid)) { $clientPid = Resolve-ClientPid $req }
+            }
+            Process-Hook $e $rootHeader $clientPid
             Send-Response $ctx 200 '{}'
         } catch {
             Log "hook: bad payload: $($_.Exception.Message)"
@@ -598,8 +743,10 @@ function Handle-Request($ctx) {
             effective        = (Get-EffectiveState)
             codes            = (Get-SessionCodes)
             last_ping        = $(if ($script:lastPing -gt [datetime]::MinValue) { $script:lastPing.ToString('s') } else { $null })
+            process_events   = $script:procEvents
+            device_tool      = $script:deviceTool
             sessions         = @($script:sessions.GetEnumerator() | ForEach-Object {
-                [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s'); project = $_.Value.project; root = $_.Value.root }
+                [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s'); project = $_.Value.project; root = $_.Value.root; pid = $_.Value.pid; tools = @($_.Value.tools.GetEnumerator() | ForEach-Object { "$($_.Value) ($($_.Key))" }) }
             })
             projects         = $ProjectsPath
             log              = $LogPath
@@ -624,6 +771,7 @@ try {
 Log "daemon started: port=$PortName http=http://localhost:$HttpPort/ log=$LogPath"
 
 Update-ProjectNames
+Register-ProcessEvents
 Open-Serial | Out-Null
 $task = $listener.GetContextAsync()
 $lastHousekeeping = Get-Date
@@ -644,12 +792,17 @@ try {
         }
 
         $now = Get-Date
+        if (Update-ProcessEvents) {
+            Expire-Sessions
+            Sync-Device
+        }
         if (-not $script:serial -and $now -ge $script:releaseUntil -and $now -ge $script:nextOpenTry) {
             if (Open-Serial) {
                 # The device may have rebooted: push everything again
                 $script:deviceState = $null
                 $script:deviceSubagents = 0
                 $script:deviceSessions = $null
+                $script:deviceTool = $false
                 $script:lastInfoTry = $now
                 Read-DeviceInfo | Out-Null
                 Sync-Device $true
@@ -678,6 +831,7 @@ try {
     }
 } finally {
     Close-Serial "shutdown"
+    Unregister-ProcessEvents
     try { $listener.Stop() } catch {}
     Log "daemon stopped"
 }

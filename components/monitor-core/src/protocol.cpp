@@ -78,6 +78,14 @@ ParsedCommand parseCommand(std::string_view line){
         cmd.kind = Command::SubagentStop;
         return cmd;
     }
+    if (word == "tool_start"){
+        cmd.kind = Command::ToolStart;
+        return cmd;
+    }
+    if (word == "tool_stop"){
+        cmd.kind = Command::ToolStop;
+        return cmd;
+    }
     if (word == "sessions"){
         cmd.kind = Command::Sessions;
         cmd.arg = std::string(arg);

@@ -80,6 +80,9 @@ void Ui::overlays(){
     if (sessionCount_ >= 2){
         icons_.sessionDots(tilt_.angle, sessions_);
     }
+    if (toolRunning_ && state_ == State::Processing){
+        icons_.toolMark(tilt_.angle);
+    }
     if (linkLost()){
         icons_.linkLost(tilt_.angle);
     }
@@ -113,8 +116,9 @@ bool Ui::apply(State next){
         animFrame_ = 0;
     }
     if (next == State::Idle || next == State::Off || next == State::Error || next == State::Paused){
-        subagents_  = 0;   // the turn is over: nothing can still be running
-        workFrames_ = 0;
+        subagents_   = 0;   // the turn is over: nothing can still be running
+        toolRunning_ = false;
+        workFrames_  = 0;
     }
     pulseLeft_ = needsAttention(next) ? attention_.frames : 0;
     render();
@@ -130,6 +134,14 @@ void Ui::subagentStop(){
     if (subagents_ > 0){
         --subagents_;
     }
+}
+
+void Ui::toolStart(){
+    toolRunning_ = true;   // the gear picks the mark up on the next tick
+}
+
+void Ui::toolStop(){
+    toolRunning_ = false;
 }
 
 void Ui::setSessions(std::string_view codes){

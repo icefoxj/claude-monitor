@@ -67,6 +67,9 @@ public:
     // Hollow grey mark at the top of the band: no heartbeat from the host
     void linkLost(float angle);
 
+    // Solid blue dot on the right of the band: a tool process is running
+    void toolMark(float angle);
+
     // Sends the canvas to the display
     void push();
 

@@ -34,6 +34,13 @@ public:
     void subagentStart();
     void subagentStop();
 
+    // A tool process is running under the session (the host watches the
+    // process): a blue dot on the band while processing. Cleared when the
+    // turn ends.
+    void toolStart();
+    void toolStop();
+    bool toolRunning() const { return toolRunning_; }
+
     // Live Claude Code sessions, one code letter each (see protocol.h); the
     // dots are drawn when there are two or more. Redraws on change.
     void setSessions(std::string_view codes);
@@ -86,6 +93,7 @@ private:
     Tilt  tilt_;
     int   pulseLeft_ = 0;   // pulse frames left, 0 = none
     int   subagents_ = 0;
+    bool  toolRunning_ = false;
 
     int   stateFrames_ = 0;
     int   workFrames_  = 0;

@@ -225,6 +225,12 @@ void Icons::linkLost(float angle){
     canvas_.fillCircle(px(p.x), px(p.y), px(2.5f * unit_), kColorBg);
 }
 
+void Icons::toolMark(float angle){
+    Pt p = rotated(kBandRadius, 0, angle);
+    canvas_.fillCircle(px(p.x), px(p.y), px(5.0f * unit_), kColorBg);   // outline over the ring
+    canvas_.fillCircle(px(p.x), px(p.y), px(4.0f * unit_), kColorBlue);
+}
+
 // ---------------- icons ----------------
 
 void Icons::gear(float spinAngle, GearStyle style){

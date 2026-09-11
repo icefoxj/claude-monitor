@@ -16,7 +16,7 @@ A physical traffic light for [Claude Code](https://claude.com/claude-code), buil
 
 The three "look at the terminal" signs (red `!`, blue `?`, red `X`) pulse three times when they appear, so the change catches the eye from across the desk. The built-in IMU keeps the icons upright at any tilt, turning them smoothly as you turn the cube. With several Claude Code sessions open, the cube shows the most urgent state among them.
 
-A thin band around the icon carries three overlays. While Claude works, a **ring** grows clockwise from the top, one lap per ten minutes (yellow, then amber, then red), so a two-minute answer and a half-hour refactor look different from across the room. With two or more sessions open, **one dot per session** sits at the bottom of the band, coloured like the state of each session, while the icon itself shows the most urgent one. A **hollow grey mark** at the top means the host has stopped talking to the cube (no heartbeat for a minute), and the screen dims with it, so a spinning gear is never mistaken for work after the machine went to sleep or the daemon died. After thirty minutes idle, or thirty minutes without a host, the screen switches off; the next state change brings it back. The button under the screen toggles the display by hand and also wakes it.
+A thin band around the icon carries four overlays. While Claude works, a **ring** grows clockwise from the top, one lap per ten minutes (yellow, then amber, then red), so a two-minute answer and a half-hour refactor look different from across the room. A **blue dot** on the right of the band means a tool process (a build, a test run, a shell command) is running right now, as opposed to the model thinking. With two or more sessions open, **one dot per session** sits at the bottom of the band, coloured like the state of each session, while the icon itself shows the most urgent one. A **hollow grey mark** at the top means the host has stopped talking to the cube (no heartbeat for a minute), and the screen dims with it, so a spinning gear is never mistaken for work after the machine went to sleep or the daemon died. After thirty minutes idle, or thirty minutes without a host, the screen switches off; the next state change brings it back. The button under the screen toggles the display by hand and also wakes it.
 
 Native **ESP-IDF 5.5** (C++ / CMake / FreeRTOS) with the official VS Code extension. No Arduino, no PlatformIO, no Wi-Fi, no soldering.
 
@@ -36,7 +36,7 @@ The Anthropic API does not expose session state, so the device cannot poll. Inst
 └──────────────┘                      └──────────────┘                  └──────────────┘
 ```
 
-Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat: the daemon sends one every 30 s, and once the device has seen a ping, a minute of silence means the host is gone. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Two words make the device talk back: `status` answers with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=… fw=… board=… sign=… offset=… sessions=… link=… work=… screen=…`) for calibration and debugging, and `version` answers with one `VERSION` line that identifies the hardware and the firmware: the board the firmware was built for, the model M5Unified detected, chip and revision, flash size, firmware version, ESP-IDF and M5Unified versions, protocol version, what the build can show beyond the icon (`features=`), build time, ELF SHA prefix, uptime and the reason for the last reset. One more word exists for boards that list `events` among their features: `event <name>` followed by tab-separated `key=value` pairs carries a whole hook event, every field the hook delivered, for the Tab5's inspector. The daemon reads `features` before sending any; the AtomS3R never receives them.
+Protocol: one command per line, `\n`-terminated, no JSON, no handshake. State commands: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Two counters: `subagent_start` / `subagent_stop` (while the count is above zero the gear grows a satellite; the count resets when the turn ends). A flag: `tool_start` / `tool_stop` (a tool process is running: the blue dot; cleared when the turn ends). `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat: the daemon sends one every 30 s, and once the device has seen a ping, a minute of silence means the host is gone. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Two words make the device talk back: `status` answers with one line (`STATUS state=… subagents=… rot=… angle=… ax=… ay=… az=… fw=… board=… sign=… offset=… sessions=… link=… work=… screen=…`) for calibration and debugging, and `version` answers with one `VERSION` line that identifies the hardware and the firmware: the board the firmware was built for, the model M5Unified detected, chip and revision, flash size, firmware version, ESP-IDF and M5Unified versions, protocol version, what the build can show beyond the icon (`features=`), build time, ELF SHA prefix, uptime and the reason for the last reset. One more word exists for boards that list `events` among their features: `event <name>` followed by tab-separated `key=value` pairs carries a whole hook event, every field the hook delivered, for the Tab5's inspector. The daemon reads `features` before sending any; the AtomS3R never receives them.
 
 The daemon is optional: the hooks can also run a one-line script per event that writes to the port directly (see [Without the daemon](#without-the-daemon)). The daemon is better in every way that matters: no process start-up per event, a single writer on the port, events delivered in order, a log with timestamps, and per-session tracking.
 
@@ -150,7 +150,9 @@ The script uses .NET's `SerialPort`, pins DTR/RTS low so the board never resets,
 
 What it does with each event: keeps one state per Claude Code session (`session_id` comes with every hook), sends the device the most urgent state among the live sessions (`error` > `!` = `?` > hourglass > compacting > processing > idle) plus the list of all of them for the session dots, counts subagents across sessions, drops a session on `SessionEnd` or after four hours of silence, and re-sends everything when the device reappears after a reboot or re-plug. It pings the device every 30 s, which is how the cube notices when the daemon is gone.
 
-A Claude Code killed without a `SessionEnd` (terminal closed the hard way, machine crashed) would leave its last state on the cube for those four hours. So a session that has been in `processing` or `compacting` for fifteen minutes with no change to its transcript file (Claude Code appends to it as it works) is dropped as dead. The cost is a false positive on a single tool call that runs longer than that, corrected by the next hook event. The timeouts are parameters: `-DeadSessionMinutes 15`, `-SessionTimeoutMinutes 240`, `-PingSeconds 30`.
+**Approvals, and what the process tree tells.** Claude Code has no hook for the moment you approve a permission: after the red sign, nothing fires until the approved tool finishes, which for a build or a test run is minutes of red for nothing. The daemon closes that gap by watching processes. Each hook request comes from the session's own `claude.exe`; the daemon looks that process up once (from the TCP connection of the request) and subscribes to Windows' process start/end events (WMI). A tool process starting under a session that is showing the red sign means the permission went through, so the gear comes back within about half a second instead of when the tool ends; the same events drive the blue **tool running** dot, and a session whose process disappears is dropped at once rather than after a timeout. Tools that spawn no process (Edit, Read, Write) are quick anyway and report through `PostToolUse`; any other hook from a waiting session (a subagent starting, a batch of tools finishing) also counts as approval.
+
+Without the process information (the lookup failed, or a hook came from elsewhere), the older heuristics still apply: a session in `processing` or `compacting` for fifteen minutes with no change to its transcript file is dropped as dead, and sessions expire after four hours of silence. The timeouts are parameters: `-DeadSessionMinutes 15`, `-SessionTimeoutMinutes 240`, `-PingSeconds 30`.
 
 The log at `%LOCALAPPDATA%\claude-monitor\daemon.log` has one line per event with a millisecond timestamp, which is how you find out where time goes when an icon seems late.
 
@@ -182,8 +184,10 @@ Hooks live in `~/.claude/settings.json` (all sessions) or `.claude/settings.json
                                        "headers": { "X-Claude-Project": "${CLAUDE_PROJECT_DIR}" },
                                        "allowedEnvVars": ["CLAUDE_PROJECT_DIR"] }] }],
     "UserPromptSubmit": [{ "hooks": [{ "…same object…": "" }] }],
-    "PreToolUse":       [{ "matcher": "AskUserQuestion", "hooks": [{ "…": "" }] }],
+    "PreToolUse":       [{ "hooks": [{ "…": "" }] }],
     "PostToolUse":      [{ "hooks": [{ "…": "" }] }],
+    "PostToolUseFailure": [{ "hooks": [{ "…": "" }] }],
+    "PostToolBatch":    [{ "hooks": [{ "…": "" }] }],
     "Notification":     [{ "hooks": [{ "…": "" }] }],
     "Stop":             [{ "hooks": [{ "…": "" }] }],
     "StopFailure":      [{ "hooks": [{ "…": "" }] }],
@@ -196,7 +200,7 @@ Hooks live in `~/.claude/settings.json` (all sessions) or `.claude/settings.json
 }
 ```
 
-The twelve entries are identical apart from the `PreToolUse` matcher. The daemon shows each session under the root's folder name (`claude-monitor`); to show something else, create `%LOCALAPPDATA%\claude-monitor\projects.json` mapping roots to names, `{ "E:\\work\\claude-monitor": "Monitor" }`. It is re-read within a minute of a change. Without the header (older configuration) the daemon falls back to the `cwd` of the first event it sees for the session.
+The fourteen entries are identical. The daemon shows each session under the root's folder name (`claude-monitor`); to show something else, create `%LOCALAPPDATA%\claude-monitor\projects.json` mapping roots to names, `{ "E:\\work\\claude-monitor": "Monitor" }`. It is re-read within a minute of a change. Without the header (older configuration) the daemon falls back to the `cwd` of the first event it sees for the session.
 
 The mapping the daemon applies:
 
@@ -205,7 +209,10 @@ The mapping the daemon applies:
 | `SessionStart` | | `idle` | turns the screen back on if the last session switched it off |
 | `UserPromptSubmit` | | `processing` | |
 | `PreToolUse` | `tool_name` = `AskUserQuestion` | `question` | Claude is asking you something |
+| `PreToolUse` | any other tool | `processing` | Claude decided on a tool (it fires before a permission prompt, if one follows) |
 | `PostToolUse` | | `processing` | back to the gear once you answered a permission or a question |
+| `PostToolUseFailure` | | `processing` | the tool failed; Claude carries on with the error |
+| `PostToolBatch` | | `processing` | a batch of parallel tools resolved, next model call |
 | `Notification` | `permission_prompt`, `quota_auto_resume_stale` | `waiting_user` | permission prompt, or a usage-limit reset that needs Enter |
 | `Notification` | `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` | `question` | an MCP server or a background agent needs your input |
 | `Notification` | `quota_auto_resume_fired` | `processing` | the usage limit reset and the task resumed |
@@ -219,7 +226,7 @@ The mapping the daemon applies:
 | `SubagentStart` / `SubagentStop` | | count ± 1 | |
 | `SessionEnd` | | session removed; `off` when it was the last one | |
 
-Open `/hooks` inside a running session (it reloads the configuration) or start a new one, then send a prompt: gear while it thinks, green check when it finishes, exclamation sign when it asks for permission, question sign when it asks you something. Two caveats. First, there is no hook event for the moment you *approve* a permission: the red sign stays until the approved tool finishes (`PostToolUse`), so a long build approved by hand means a long red. Second, Claude Code rewrites `settings.json` itself, for example when it records a newly allowed directory or permission, and a block added by hand while a session was running can be lost in that rewrite; if a hook you added has vanished, re-add it and it sticks.
+Open `/hooks` inside a running session (it reloads the configuration) or start a new one, then send a prompt: gear while it thinks, green check when it finishes, exclamation sign when it asks for permission, question sign when it asks you something. Two caveats. First, there is no hook event for the moment you *approve* a permission; the daemon infers it from the tool's process (see [The host daemon](#the-host-daemon)), and in the no-daemon variant the red sign stays until the approved tool finishes (`PostToolUse`). Second, Claude Code rewrites `settings.json` itself, for example when it records a newly allowed directory or permission, and a block added by hand while a session was running can be lost in that rewrite; if a hook you added has vanished, re-add it and it sticks.
 
 Hooks run wherever Claude Code runs: the terminal, the VS Code and JetBrains extensions, and Remote Control sessions driven from claude.ai or the phone all fire the hooks on your machine. Cloud sessions on claude.ai/code run hooks in the cloud sandbox from the repository's `.claude/settings.json`, where neither the daemon nor the USB port exists. Plain claude.ai chat has no hooks.
 
@@ -346,8 +353,8 @@ GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds bo
 
 ## Known limitations
 
-- There is no hook event when a permission is approved, so the red sign lasts until the approved tool finishes.
-- A single tool call that runs for more than fifteen minutes without any other event makes the daemon drop the session as dead; the icon goes back to whatever the other sessions show until the next hook event revives it. Raise `-DeadSessionMinutes` if that bites.
+- There is no hook event when a permission is approved. With the daemon the approval is inferred from the tool's process starting, which covers shell commands, builds and anything that spawns a process; for a tool that spawns nothing and still takes long (a slow MCP call) the red sign lasts until it finishes.
+- The process watching is Windows-only (WMI, `Get-NetTCPConnection`); on other systems the daemon falls back to the hooks alone, and a session in `processing` or `compacting` for more than fifteen minutes without any event is dropped as dead until the next hook revives it (`-DeadSessionMinutes`).
 - `Notification` semantics vary between Claude Code versions; if you get a green check where you expected the exclamation sign, that's why.
 - ESP-IDF logs and the protocol share the same USB port. Harmless: the daemon reads and discards the log lines, and only reacts to `STATUS` replies.
 - The daemon must be running for the HTTP hooks to reach anything; when it is not, Claude Code reports the failed hook and carries on, and the cube shows the grey mark after a minute. The scheduled task restarts it at logon and after crashes.

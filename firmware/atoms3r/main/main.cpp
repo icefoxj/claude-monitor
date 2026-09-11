@@ -110,12 +110,13 @@ void sendStatus(const monitor::Ui& ui, const Calibration& cal, uint8_t brightnes
     char msg[224];
     int n = snprintf(msg, sizeof(msg),
                      "STATUS state=%s subagents=%d rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f"
-                     " fw=%s board=%s sign=%d offset=%.1f sessions=%s link=%s work=%d screen=%s\n",
+                     " fw=%s board=%s sign=%d offset=%.1f sessions=%s link=%s work=%d screen=%s tool=%d\n",
                      monitor::stateName(ui.state()), ui.subagents(), cal.rotation,
                      ui.tilt().angle * 180.0f / kPi, ax, ay, az,
                      esp_app_get_description()->version, kBoard,
                      cal.sign < 0 ? -1 : 1, cal.offsetDeg,
-                     sessions[0] ? sessions : "-", link, ui.workFrames() / 30, screenName(brightness));
+                     sessions[0] ? sessions : "-", link, ui.workFrames() / 30, screenName(brightness),
+                     ui.toolRunning() ? 1 : 0);
     writeLine(msg, n);
 }
 
@@ -211,6 +212,8 @@ extern "C" void app_main(void){
                     break;
                 case monitor::Command::SubagentStart: ui.subagentStart(); break;
                 case monitor::Command::SubagentStop:  ui.subagentStop(); break;
+                case monitor::Command::ToolStart:     ui.toolStart(); break;
+                case monitor::Command::ToolStop:      ui.toolStop(); break;
                 case monitor::Command::Sessions:      ui.setSessions(cmd.arg); break;
                 case monitor::Command::Ping:          ui.ping(); break;
                 case monitor::Command::Status:        sendStatus(ui, cal, brightness, ax, ay, az); break;

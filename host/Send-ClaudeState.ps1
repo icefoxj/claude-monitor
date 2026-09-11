@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("processing", "waiting_user", "question", "error", "paused", "compacting",
-                 "idle", "off", "subagent_start", "subagent_stop")]
+                 "idle", "off", "subagent_start", "subagent_stop", "tool_start", "tool_stop")]
     [string]$State,
 
     [string]$PortName = "COM5",

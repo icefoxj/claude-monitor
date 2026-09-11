@@ -132,13 +132,14 @@ void sendStatus(const monitor::Ui& ui, const monitor::EventLog& log, const monit
     char msg[288];
     int n = snprintf(msg, sizeof(msg),
                      "STATUS state=%s subagents=%d rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f"
-                     " fw=%s board=%s sign=%d offset=%d sessions=%s link=%s work=%d screen=%s"
+                     " fw=%s board=%s sign=%d offset=%d sessions=%s link=%s work=%d screen=%s tool=%d"
                      " events=%lu sector=%d\n",
                      monitor::stateName(ui.state()), ui.subagents(), M5.Display.getRotation(),
                      atan2f(ay, ax) * 180.0f / kPi, ax, ay, az,
                      esp_app_get_description()->version, kBoard,
                      orient.config().sign, orient.config().offset,
                      sessions[0] ? sessions : "-", link, ui.workFrames() / 30, screenName(brightness),
+                     ui.toolRunning() ? 1 : 0,
                      static_cast<unsigned long>(log.count()), orient.sector());
     writeLine(msg, n);
 }
@@ -147,8 +148,9 @@ void sendStatus(const monitor::Ui& ui, const monitor::EventLog& log, const monit
 void statusText(const monitor::Ui& ui, char* out, size_t size){
     const char* sessions = ui.sessions();
     const char* link = !ui.linkArmed() ? "no host yet" : (ui.linkLost() ? "host lost" : "host ok");
-    snprintf(out, size, "%s   sessions %s   %s",
-             monitor::stateName(ui.state()), sessions[0] ? sessions : "-", link);
+    snprintf(out, size, "%s%s   sessions %s   %s",
+             monitor::stateName(ui.state()), ui.toolRunning() ? " (tool running)" : "",
+             sessions[0] ? sessions : "-", link);
 }
 
 }  // namespace
@@ -274,6 +276,8 @@ extern "C" void app_main(void){
                     break;
                 case monitor::Command::SubagentStart: ui.subagentStart(); viewDirty = true; break;
                 case monitor::Command::SubagentStop:  ui.subagentStop();  viewDirty = true; break;
+                case monitor::Command::ToolStart:     ui.toolStart(); viewDirty = true; break;
+                case monitor::Command::ToolStop:      ui.toolStop();  viewDirty = true; break;
                 case monitor::Command::Sessions:      ui.setSessions(cmd.arg); viewDirty = true; break;
                 case monitor::Command::Ping:          ui.ping(); break;
                 case monitor::Command::Status:        sendStatus(ui, log, orient, brightness, ax, ay, az); break;

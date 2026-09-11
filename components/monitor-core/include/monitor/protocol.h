@@ -17,6 +17,10 @@
 //   "off"            -> screen off
 //   "subagent_start" -> one more subagent running: the gear grows a satellite
 //   "subagent_stop"  -> one subagent finished
+//   "tool_start"     -> a tool process is running under the session: blue dot
+//                     on the band (the host sees the process, so this also
+//                     means a permission was approved)
+//   "tool_stop"      -> no tool process running any more
 //   "sessions <codes>" -> one letter per live Claude Code session, most urgent
 //                     first (p processing, w waiting_user, q question, e error,
 //                     h paused, c compacting, i idle); no codes = none
@@ -40,8 +44,8 @@
 namespace monitor {
 
 // Bumped when words are added: 1 = the 1.0/1.1 set (states, subagents,
-// status); 2 = sessions, ping, calibrate, version; 3 = event
-constexpr int kProtocolVersion = 3;
+// status); 2 = sessions, ping, calibrate, version; 3 = event; 4 = tool_start/stop
+constexpr int kProtocolVersion = 4;
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
@@ -60,7 +64,8 @@ bool isStatic(State s);
 // States redrawn every frame (spinning gears, the running hourglass)
 bool isAnimated(State s);
 
-enum class Command { Unknown, SetState, SubagentStart, SubagentStop, Status, Version, Ping, Sessions, Calibrate, Event };
+enum class Command { Unknown, SetState, SubagentStart, SubagentStop, ToolStart, ToolStop,
+                     Status, Version, Ping, Sessions, Calibrate, Event };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;

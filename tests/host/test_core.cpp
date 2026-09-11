@@ -122,7 +122,9 @@ void testParseCommand(){
     CHECK(parseCommand("status").kind == Command::Status);
     CHECK(parseCommand("version").kind == Command::Version);
     CHECK(parseCommand("version").arg == "");
-    CHECK(kProtocolVersion == 3);
+    CHECK(parseCommand("tool_start").kind == Command::ToolStart);
+    CHECK(parseCommand("tool_stop").kind == Command::ToolStop);
+    CHECK(kProtocolVersion == 4);
 
     ParsedCommand ev = parseCommand("event PostToolUse\tsummary=PostToolUse/Bash\tsession_id=abc");
     CHECK(ev.kind == Command::Event);
