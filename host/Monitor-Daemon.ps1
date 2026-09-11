@@ -22,11 +22,11 @@
 
     Claude Code has no hook for the moment a permission is approved. The
     daemon learns each session's claude.exe from the hook's TCP connection
-    and watches WMI process events: a tool process starting under a
-    waiting session means "approved" (processing at once, not when the
-    tool ends), a tool process alive means "tool running" (tool_start /
-    tool_stop, a blue dot on the device), and the session's process going
-    away means the session is dead.
+    and watches its child processes in snapshots of the process table: a
+    tool process starting under a waiting session means "approved"
+    (processing at once, not when the tool ends), a tool process alive means
+    "tool running" (tool_start / tool_stop, a blue EXT badge on the device),
+    and the session's process going away means the session is dead.
 
     A device whose VERSION lists "sessions" in features= (the Tab5) shows
     one tile per live session: it gets a "session <id> label=.. state=..
@@ -102,7 +102,7 @@ $script:nextOpenTry     = [datetime]::MinValue
 $script:deviceState     = $null   # last state written to the device
 $script:deviceSubagents = 0       # subagent count the device currently holds
 $script:deviceSessions  = $null   # session codes the device currently shows
-$script:deviceTool      = $false  # the device shows the tool-running dot
+$script:deviceTool      = $false  # the device shows the tool-running (EXT) badge
 $script:lastPing        = [datetime]::MinValue
 $script:deviceInfo      = $null   # fields of the device's VERSION line, read when the port opens
 $script:lastInfoTry     = [datetime]::MinValue
@@ -253,30 +253,142 @@ function Get-ProjectName([string]$root) {
 # There is no hook for the moment a permission is approved: the red sign
 # would stay until the tool finished. But the tool runs as a child process
 # of the session's claude.exe, and that process is known: the hook's HTTP
-# connection names it (Get-NetTCPConnection, once per session). WMI process
-# events then show a tool starting under it (= approved, and "tool running"
-# for the blue dot), ending, and the session's own process going away.
+# connection names it (Get-NetTCPConnection, once per session). A snapshot
+# of the process table, taken by the main loop, then shows a tool starting
+# under it (= approved, and "tool running" for the EXT badge), ending, and
+# the session's own process going away.
+#
+# The snapshot is NtQuerySystemInformation(SystemProcessInformation) through
+# a small C# helper (about 20 ms for 700 processes), filtered to the
+# sessions' pids before it reaches PowerShell; twice a second while a
+# session waits for an approval or has just called a tool, every two seconds
+# otherwise. WMI __InstanceCreationEvent polling was used first and is a
+# trap: the arbitrator keeps whole Win32_Process instances for a polling
+# query within a 5 MB per-user quota, so with a few hundred processes (an
+# ESP-IDF build) the subscription is cancelled without a word and new ones
+# fail with "Quota violation"; and the flood of events before that stalled
+# the daemon for minutes, with the hooks timing out meanwhile.
 
-$script:procEvents = $false
+$script:procSnap   = $false               # the snapshot helper is available (Windows only)
+$script:procNextAt = [datetime]::MinValue # next snapshot
 $IgnoredChildren = @('conhost.exe')
 
-function Register-ProcessEvents {
+# x64 layout of SYSTEM_PROCESS_INFORMATION: CreateTime at 32, ImageName
+# (UNICODE_STRING) at 56, UniqueProcessId at 80, InheritedFromUniqueProcessId at 88
+$ProcSnapSource = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class ProcSnap {
+    [DllImport("ntdll.dll")] static extern int NtQuerySystemInformation(int cls, IntPtr buf, int len, out int retLen);
+    public struct Entry { public int Pid; public int Parent; public string Name; public long Created; }
+    static IntPtr buf = IntPtr.Zero; static int bufLen = 0;
+    // Processes whose pid or parent pid is in `parents`
+    public static List<Entry> Take(int[] parents) {
+        int need;
+        if (buf == IntPtr.Zero) { bufLen = 1 << 20; buf = Marshal.AllocHGlobal(bufLen); }
+        int status = NtQuerySystemInformation(5, buf, bufLen, out need);   // SystemProcessInformation
+        while (status == unchecked((int)0xC0000004)) {                      // STATUS_INFO_LENGTH_MISMATCH
+            Marshal.FreeHGlobal(buf); bufLen = need + (256 << 10); buf = Marshal.AllocHGlobal(bufLen);
+            status = NtQuerySystemInformation(5, buf, bufLen, out need);
+        }
+        if (status != 0) return null;
+        var list = new List<Entry>();
+        long p = buf.ToInt64();
+        while (true) {
+            int next = Marshal.ReadInt32((IntPtr)p, 0);
+            int pid = (int)Marshal.ReadIntPtr((IntPtr)p, 80).ToInt64();
+            int parent = (int)Marshal.ReadIntPtr((IntPtr)p, 88).ToInt64();
+            if (Array.IndexOf(parents, parent) >= 0 || Array.IndexOf(parents, pid) >= 0) {
+                int nameLen = Marshal.ReadInt16((IntPtr)p, 56);
+                IntPtr namePtr = Marshal.ReadIntPtr((IntPtr)p, 64);
+                string name = (namePtr != IntPtr.Zero && nameLen > 0) ? Marshal.PtrToStringUni(namePtr, nameLen / 2) : "";
+                list.Add(new Entry { Pid = pid, Parent = parent, Name = name, Created = Marshal.ReadInt64((IntPtr)p, 32) });
+            }
+            if (next == 0) break;
+            p += next;
+        }
+        return list;
+    }
+}
+'@
+
+function Initialize-ProcessSnapshots {
+    if (-not $IsWindows) { Log "processes: not Windows, approval detection off"; return }
     try {
-        Register-CimIndicationEvent -Query "SELECT * FROM __InstanceCreationEvent WITHIN 0.5 WHERE TargetInstance ISA 'Win32_Process'" `
-            -SourceIdentifier 'monitor-proc-start' -ErrorAction Stop | Out-Null
-        Register-CimIndicationEvent -Query "SELECT * FROM __InstanceDeletionEvent WITHIN 0.5 WHERE TargetInstance ISA 'Win32_Process'" `
-            -SourceIdentifier 'monitor-proc-end' -ErrorAction Stop | Out-Null
-        $script:procEvents = $true
-        Log "processes: watching process start/end events (approval detection on)"
+        Add-Type -TypeDefinition $ProcSnapSource -ErrorAction Stop
+        $null = [ProcSnap]::Take([int[]]@(0))
+        $script:procSnap = $true
+        Log "processes: watching the sessions' child processes (approval detection on)"
     } catch {
-        Log "processes: cannot subscribe to WMI process events, approval detection off: $($_.Exception.Message)"
+        Log "processes: snapshot helper unavailable, approval detection off: $($_.Exception.Message)"
     }
 }
 
-function Unregister-ProcessEvents {
-    foreach ($id in 'monitor-proc-start', 'monitor-proc-end') {
-        Unregister-Event -SourceIdentifier $id -ErrorAction SilentlyContinue
+function Get-SessionPids {
+    return @($script:sessions.Values | Where-Object { $_.pid -gt 0 } | ForEach-Object { [int]$_.pid } | Sort-Object -Unique)
+}
+
+function Note-ToolStarted($s, [string]$name, [int]$childPid) {
+    $s.tools[$childPid] = $name
+    if ($s.state -eq 'waiting_user') {
+        $s.state = 'processing'
+        $s.last  = Get-Date
+        Log "session $($s.short): tool $name started under pid $($s.pid): approved -> processing"
+    } else {
+        Log "session $($s.short): tool $name started (pid $childPid)"
     }
+}
+
+# Compares the live children of each session's process with what it had: a
+# new child is a tool starting (the approval, when the session was waiting),
+# a missing one a tool that ended, a missing session process a dead session.
+# The first look after a session's pid becomes known only records what is
+# already running: that predates any prompt. Returns true when something the
+# device shows may have changed.
+function Update-ProcessTree {
+    if (-not $script:procSnap) { return $false }
+    $pids = Get-SessionPids
+    if ($pids.Count -eq 0) { return $false }
+    $entries = $null
+    try { $entries = [ProcSnap]::Take([int[]]$pids) } catch { return $false }
+    if ($null -eq $entries) { return $false }
+    $alive    = @{}
+    $children = @{}
+    foreach ($e in $entries) {
+        $alive[[int]$e.Pid] = $true
+        if ([string]$e.Name -in $IgnoredChildren) { continue }
+        if (-not $children.ContainsKey([int]$e.Parent)) { $children[[int]$e.Parent] = @{} }
+        $children[[int]$e.Parent][[int]$e.Pid] = [string]$e.Name
+    }
+    $changed = $false
+    foreach ($s in @($script:sessions.Values)) {
+        if ($s.pid -le 0) { continue }
+        if (-not $alive.ContainsKey([int]$s.pid)) {
+            if (-not $s.dead) { $s.dead = $true; $changed = $true }
+            continue
+        }
+        $live = if ($children.ContainsKey([int]$s.pid)) { $children[[int]$s.pid] } else { @{} }
+        foreach ($cpid in @($live.Keys)) {
+            if ($s.tools.ContainsKey($cpid)) { continue }
+            if ($s.seeded) {
+                Note-ToolStarted $s $live[$cpid] $cpid
+            } else {
+                $s.tools[$cpid] = $live[$cpid]
+                Log "session $($s.short): tool $($live[$cpid]) already running (pid $cpid)"
+            }
+            $changed = $true
+        }
+        foreach ($t in @($s.tools.Keys)) {
+            if (-not $live.ContainsKey($t)) {
+                Log "session $($s.short): tool $($s.tools[$t]) ended (pid $t)"
+                $s.tools.Remove($t)
+                $changed = $true
+            }
+        }
+        $s.seeded = $true
+    }
+    return $changed
 }
 
 # The process on the other end of a hook request: the claude.exe of the
@@ -296,49 +408,6 @@ function Test-ProcessAlive([int]$processId) {
     return $null -ne (Get-Process -Id $processId -ErrorAction SilentlyContinue)
 }
 
-# Applies the queued process events to the sessions; returns true when
-# something the device shows may have changed
-function Update-ProcessEvents {
-    if (-not $script:procEvents) { return $false }
-    $changed = $false
-    foreach ($ev in @(Get-Event -SourceIdentifier 'monitor-proc-start' -ErrorAction SilentlyContinue)) {
-        $ti = $ev.SourceEventArgs.NewEvent.TargetInstance
-        Remove-Event -EventIdentifier $ev.EventIdentifier -ErrorAction SilentlyContinue
-        if (-not $ti -or [string]$ti.Name -in $IgnoredChildren) { continue }
-        $parent = [int]$ti.ParentProcessId
-        foreach ($s in $script:sessions.Values) {
-            if ($s.pid -le 0 -or $s.pid -ne $parent) { continue }
-            $s.tools[[int]$ti.ProcessId] = [string]$ti.Name
-            if ($s.state -eq 'waiting_user') {
-                $s.state = 'processing'
-                $s.last  = Get-Date
-                Log "session $($s.short): tool $($ti.Name) started under pid ${parent}: approved -> processing"
-            } else {
-                Log "session $($s.short): tool $($ti.Name) started (pid $($ti.ProcessId))"
-            }
-            $changed = $true
-        }
-    }
-    foreach ($ev in @(Get-Event -SourceIdentifier 'monitor-proc-end' -ErrorAction SilentlyContinue)) {
-        $ti = $ev.SourceEventArgs.NewEvent.TargetInstance
-        Remove-Event -EventIdentifier $ev.EventIdentifier -ErrorAction SilentlyContinue
-        if (-not $ti) { continue }
-        $gone = [int]$ti.ProcessId
-        foreach ($s in $script:sessions.Values) {
-            if ($s.tools.ContainsKey($gone)) {
-                Log "session $($s.short): tool $($s.tools[$gone]) ended (pid $gone)"
-                $s.tools.Remove($gone)
-                $changed = $true
-            }
-            if ($s.pid -gt 0 -and $s.pid -eq $gone) {
-                $s.dead = $true
-                $changed = $true
-            }
-        }
-    }
-    return $changed
-}
-
 # ---------------- sessions ----------------
 
 $script:sessions = @{}   # session_id -> @{ state; subagents; last; transcript; root; project; pid; tools; dead; short }
@@ -347,7 +416,7 @@ function Get-Session([string]$id) {
     if (-not $script:sessions.ContainsKey($id)) {
         $script:sessions[$id] = @{
             id = $id; state = 'idle'; subagents = 0; last = (Get-Date); first = (Get-Date); transcript = $null; root = $null; project = $null
-            pid = 0; tools = @{}; dead = $false; short = $id.Substring(0, [Math]::Min(8, $id.Length))
+            pid = 0; tools = @{}; seeded = $false; dead = $false; short = $id.Substring(0, [Math]::Min(8, $id.Length))
         }
     }
     return $script:sessions[$id]
@@ -667,12 +736,14 @@ function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
         if ($cmd -in 'subagent_start', 'subagent_stop' -and $s.state -eq 'waiting_user') { $s.state = 'processing' }
         $s.last = Get-Date
         if ($clientPid -gt 0 -and $clientPid -ne $s.pid) {
-            $s.pid  = $clientPid
-            $s.dead = $false
+            $s.pid    = $clientPid
+            $s.dead   = $false
+            $s.tools  = @{}
+            $s.seeded = $false   # the next snapshot records what already runs under it
             Log "session ${short}: Claude Code process pid $clientPid"
         }
         if ($e.hook_event_name -in 'PostToolUse', 'PostToolUseFailure' -and $s.tools.Count -gt 0) {
-            # The tool is over: forget its processes even if WMI has not reported them yet
+            # The tool is over: forget its processes without waiting for the next snapshot
             foreach ($t in @($s.tools.Keys)) { if (-not (Test-ProcessAlive $t)) { $s.tools.Remove($t) } }
         }
         if ($e.transcript_path) { $s.transcript = [string]$e.transcript_path }
@@ -810,7 +881,8 @@ function Handle-Request($ctx) {
             effective        = (Get-EffectiveState)
             codes            = (Get-SessionCodes)
             last_ping        = $(if ($script:lastPing -gt [datetime]::MinValue) { $script:lastPing.ToString('s') } else { $null })
-            process_events   = $script:procEvents
+            process_watch    = $script:procSnap
+            process_pids     = (Get-SessionPids)
             device_tool      = $script:deviceTool
             sessions         = @($script:sessions.GetEnumerator() | ForEach-Object {
                 [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s'); project = $_.Value.project; root = $_.Value.root; pid = $_.Value.pid; tools = @($_.Value.tools.GetEnumerator() | ForEach-Object { "$($_.Value) ($($_.Key))" }) }
@@ -838,7 +910,7 @@ try {
 Log "daemon started: port=$PortName http=http://localhost:$HttpPort/ log=$LogPath"
 
 Update-ProjectNames
-Register-ProcessEvents
+Initialize-ProcessSnapshots
 Open-Serial | Out-Null
 $task = $listener.GetContextAsync()
 $lastHousekeeping = Get-Date
@@ -859,9 +931,16 @@ try {
         }
 
         $now = Get-Date
-        if (Update-ProcessEvents) {
-            Expire-Sessions
-            Sync-Device
+        if ($script:procSnap -and $now -ge $script:procNextAt) {
+            # Twice a second while an approval may be pending or a tool was just
+            # called (its process is about to appear), every two seconds otherwise
+            $busy = @($script:sessions.Values | Where-Object {
+                $_.pid -gt 0 -and ($_.state -eq 'waiting_user' -or ($now - $_.last).TotalSeconds -lt 5) }).Count -gt 0
+            $script:procNextAt = $now.AddMilliseconds($(if ($busy) { 500 } else { 2000 }))
+            if (Update-ProcessTree) {
+                Expire-Sessions
+                Sync-Device
+            }
         }
         if (-not $script:serial -and $now -ge $script:releaseUntil -and $now -ge $script:nextOpenTry) {
             if (Open-Serial) {
@@ -901,7 +980,6 @@ try {
     }
 } finally {
     Close-Serial "shutdown"
-    Unregister-ProcessEvents
     try { $listener.Stop() } catch {}
     Log "daemon stopped"
 }

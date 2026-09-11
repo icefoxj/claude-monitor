@@ -67,7 +67,9 @@ public:
     // Hollow grey mark at the top of the band: no heartbeat from the host
     void linkLost(float angle);
 
-    // Solid blue dot on the right of the band: a tool process is running
+    // Blue badge reading "EXT" at the bottom right of the icon: an external
+    // tool process is running. It overlaps the band and the icon's corner
+    // like a notification badge, and turns with the icon
     void toolMark(float angle);
 
     // Sends the canvas to the display
@@ -112,10 +114,17 @@ private:
     // sy = +1 draws the top bulb, -1 the bottom one
     void fillBulb(float sy, float ya, float yb, uint16_t color, float angle);
 
+    // Draws the tool badge into badge_ (once per canvas size): text cannot
+    // be drawn at an angle, so the badge is a small sprite that is pushed
+    // rotated
+    void prepareBadge();
+
     M5Canvas& canvas_;
     float unit_;        // canvas pixels per 128-space unit
     float cx_, cy_;     // canvas centre in pixels
     int pushX_, pushY_;
+    M5Canvas badge_;    // the tool badge, ready to push; empty until first needed
+    int badgeSize_ = 0; // its side in pixels, 0 = not drawn for this canvas size
 };
 
 }  // namespace monitor

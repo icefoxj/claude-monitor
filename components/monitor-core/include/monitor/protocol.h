@@ -17,9 +17,9 @@
 //   "off"            -> screen off
 //   "subagent_start" -> one more subagent running: the gear grows a satellite
 //   "subagent_stop"  -> one subagent finished
-//   "tool_start"     -> a tool process is running under the session: blue dot
-//                     on the band (the host sees the process, so this also
-//                     means a permission was approved)
+//   "tool_start"     -> a tool process is running under the session: blue EXT
+//                     badge at the icon's corner (the host sees the process,
+//                     so this also means a permission was approved)
 //   "tool_stop"      -> no tool process running any more
 //   "sessions <codes>" -> one letter per live Claude Code session, most urgent
 //                     first (p processing, w waiting_user, q question, e error,

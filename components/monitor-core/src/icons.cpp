@@ -54,7 +54,8 @@ Icons::Icons(M5Canvas& canvas, int size, int pushX, int pushY)
       cx_(size * 0.5f),
       cy_(size * 0.5f),
       pushX_(pushX),
-      pushY_(pushY) {}
+      pushY_(pushY),
+      badge_(&canvas) {}
 
 void Icons::setSize(int size, int pushX, int pushY){
     unit_  = size / 128.0f;
@@ -62,6 +63,8 @@ void Icons::setSize(int size, int pushX, int pushY){
     cy_    = size * 0.5f;
     pushX_ = pushX;
     pushY_ = pushY;
+    badge_.deleteSprite();   // redrawn at the new size when next needed
+    badgeSize_ = 0;
 }
 
 // ---------------- helper primitives ----------------
@@ -233,10 +236,61 @@ void Icons::linkLost(float angle){
     canvas_.fillCircle(px(p.x), px(p.y), px(2.5f * unit_), kColorBg);
 }
 
+// Tool badge: a blue disc with "EXT" at the bottom-right corner, its centre
+// 46 units from the icon's centre along the diagonal (radius 16 + a 1.5
+// outline reach 63.5, inside the canvas). It covers the corner of the band
+// and of the icon, like a notification badge.
+constexpr float kBadgeOffset  = 46.0f / 1.41421356f;   // x and y of the centre
+constexpr float kBadgeRadius  = 16.0f;
+constexpr float kBadgeOutline = 1.5f;
+constexpr uint16_t kColorKey  = rgb565(255, 0, 255);   // transparent in the badge sprite
+
+void Icons::prepareBadge(){
+    const float outer = (kBadgeRadius + kBadgeOutline) * unit_;
+    const int size = px(2.0f * outer) + 2;
+    if (badgeSize_ == size) return;
+    badge_.deleteSprite();
+    badge_.setColorDepth(16);
+    if (badge_.createSprite(size, size) == nullptr){
+        badgeSize_ = 0;
+        return;
+    }
+    badgeSize_ = size;
+    const float c = size * 0.5f;
+    badge_.setPivot(c, c);
+    badge_.fillSprite(kColorKey);
+    badge_.fillCircle(px(c), px(c), px(outer), kColorBg);
+    badge_.fillCircle(px(c), px(c), px(kBadgeRadius * unit_), kColorBlue);
+
+    // The largest DejaVu whose "EXT" fits the disc, measured, so the label
+    // scales with the canvas without looking blocky
+    static const lgfx::IFont* const kFonts[] = {
+        &fonts::DejaVu9, &fonts::DejaVu12, &fonts::DejaVu18, &fonts::DejaVu24,
+        &fonts::DejaVu40, &fonts::DejaVu56, &fonts::DejaVu72,
+    };
+    const float r = kBadgeRadius * unit_;
+    const lgfx::IFont* font = kFonts[0];
+    for (const lgfx::IFont* f : kFonts){
+        badge_.setFont(f);
+        if (badge_.textWidth("EXT") > 1.55f * r || badge_.fontHeight() > 1.35f * r) break;
+        font = f;
+    }
+    badge_.setFont(font);
+    badge_.setTextDatum(textdatum_t::middle_center);
+    badge_.setTextColor(kColorWhite);   // no background: the disc is already blue
+    // Capitals sit above the middle of a font that reserves room for descenders
+    badge_.drawString("EXT", px(c), px(c + badge_.fontHeight() * 0.08f));
+}
+
 void Icons::toolMark(float angle){
-    Pt p = rotated(kBandRadius, 0, angle);
-    canvas_.fillCircle(px(p.x), px(p.y), px(5.0f * unit_), kColorBg);   // outline over the ring
-    canvas_.fillCircle(px(p.x), px(p.y), px(4.0f * unit_), kColorBlue);
+    prepareBadge();
+    if (badgeSize_ == 0) return;   // no memory for the sprite: no badge
+    Pt p = rotated(kBadgeOffset, kBadgeOffset, angle);
+    if (fabsf(angle) < 0.001f){
+        badge_.pushSprite(&canvas_, px(p.x) - badgeSize_ / 2, px(p.y) - badgeSize_ / 2, kColorKey);
+    } else {
+        badge_.pushRotateZoomWithAA(&canvas_, p.x, p.y, angle * 180.0f / kPi, 1.0f, 1.0f, kColorKey);
+    }
 }
 
 // ---------------- icons ----------------

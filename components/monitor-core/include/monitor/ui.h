@@ -36,8 +36,8 @@ public:
     void setSubagents(int n);   // absolute, from a per-session line
 
     // A tool process is running under the session (the host watches the
-    // process): a blue dot on the band while processing. Cleared when the
-    // turn ends.
+    // process): a blue EXT badge at the icon's corner while processing.
+    // Cleared when the turn ends.
     void toolStart();
     void toolStop();
     void setToolRunning(bool running);
