@@ -76,6 +76,9 @@ public:
     // Where push() puts the canvas; a board changes it when its layout turns
     void setOrigin(int pushX, int pushY) { pushX_ = pushX; pushY_ = pushY; }
 
+    // New canvas size (the board recreated the sprite) and origin
+    void setSize(int size, int pushX, int pushY);
+
 private:
     struct Pt { float x; float y; };
 

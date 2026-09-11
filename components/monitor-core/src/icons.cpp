@@ -56,6 +56,14 @@ Icons::Icons(M5Canvas& canvas, int size, int pushX, int pushY)
       pushX_(pushX),
       pushY_(pushY) {}
 
+void Icons::setSize(int size, int pushX, int pushY){
+    unit_  = size / 128.0f;
+    cx_    = size * 0.5f;
+    cy_    = size * 0.5f;
+    pushX_ = pushX;
+    pushY_ = pushY;
+}
+
 // ---------------- helper primitives ----------------
 
 Icons::Pt Icons::rotated(float x, float y, float angle, float scale) const {

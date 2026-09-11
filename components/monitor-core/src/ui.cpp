@@ -34,6 +34,11 @@ bool Ui::linkLost() const {
 }
 
 void Ui::render(float scale){
+    if (!visible_){
+        dirty_ = true;
+        return;
+    }
+    dirty_ = false;
     switch(state_){
         case State::Processing:
             icons_.gear(gearAngle_, subagents_ > 0 ? GearStyle::Subagents : GearStyle::Working);
@@ -136,12 +141,35 @@ void Ui::subagentStop(){
     }
 }
 
+void Ui::setSubagents(int n){
+    subagents_ = n < 0 ? 0 : n;
+}
+
 void Ui::toolStart(){
     toolRunning_ = true;   // the gear picks the mark up on the next tick
 }
 
 void Ui::toolStop(){
     toolRunning_ = false;
+}
+
+void Ui::setToolRunning(bool running){
+    if (running != toolRunning_){
+        toolRunning_ = running;
+        if (isStatic(state_) && pulseLeft_ == 0){
+            render();
+        }
+    }
+}
+
+void Ui::setVisible(bool visible){
+    if (visible == visible_){
+        return;
+    }
+    visible_ = visible;
+    if (visible_ && (dirty_ || isStatic(state_))){
+        render();
+    }
 }
 
 void Ui::setSessions(std::string_view codes){

@@ -33,13 +33,20 @@ public:
     // gear is drawn with a satellite. The count never goes negative.
     void subagentStart();
     void subagentStop();
+    void setSubagents(int n);   // absolute, from a per-session line
 
     // A tool process is running under the session (the host watches the
     // process): a blue dot on the band while processing. Cleared when the
     // turn ends.
     void toolStart();
     void toolStop();
+    void setToolRunning(bool running);
     bool toolRunning() const { return toolRunning_; }
+
+    // A hidden Ui (a tile not on screen) keeps its state and timers but
+    // draws nothing; showing it again redraws what it missed
+    void setVisible(bool visible);
+    bool visible() const { return visible_; }
 
     // Live Claude Code sessions, one code letter each (see protocol.h); the
     // dots are drawn when there are two or more. Redraws on change.
@@ -94,6 +101,8 @@ private:
     int   pulseLeft_ = 0;   // pulse frames left, 0 = none
     int   subagents_ = 0;
     bool  toolRunning_ = false;
+    bool  visible_ = true;
+    bool  dirty_   = false;   // a render was skipped while hidden
 
     int   stateFrames_ = 0;
     int   workFrames_  = 0;

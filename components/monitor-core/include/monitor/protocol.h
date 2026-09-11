@@ -40,17 +40,27 @@
 //                     trimmed by the host. The host sends these only to a
 //                     board whose VERSION lists "events" in features=; the
 //                     others never see them (a line can be a few KB)
+//   "session <id>\tlabel=<name>\tstate=<state>\tsubagents=<n>\ttool=<0|1>\tproject=..."
+//                  -> one live Claude Code session, for boards that list
+//                     "sessions" in features= and show one tile per session;
+//                     sent whenever something in it changes
+//   "session_end <id>" -> that session is gone
+//   "session_clear"    -> forget every session (the host re-sends them)
 
 namespace monitor {
 
 // Bumped when words are added: 1 = the 1.0/1.1 set (states, subagents,
-// status); 2 = sessions, ping, calibrate, version; 3 = event; 4 = tool_start/stop
-constexpr int kProtocolVersion = 4;
+// status); 2 = sessions, ping, calibrate, version; 3 = event;
+// 4 = tool_start/stop; 5 = session, session_end, session_clear
+constexpr int kProtocolVersion = 5;
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
 // Protocol word for a state ("processing", "idle", ...)
 const char* stateName(State s);
+
+// The reverse: false when the word is not a state
+bool parseState(std::string_view name, State& out);
 
 // One-letter code used in the "sessions" command ('p', 'w', ...; '-' for off)
 char sessionCode(State s);
@@ -65,12 +75,13 @@ bool isStatic(State s);
 bool isAnimated(State s);
 
 enum class Command { Unknown, SetState, SubagentStart, SubagentStop, ToolStart, ToolStop,
-                     Status, Version, Ping, Sessions, Calibrate, Event };
+                     Status, Version, Ping, Sessions, Calibrate, Event,
+                     Session, SessionEnd, SessionClear };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;
     State state = State::Off;   // meaningful when kind == SetState
-    std::string arg;            // the rest of the line for Sessions, Calibrate and Event
+    std::string arg;            // the rest of the line for Sessions, Calibrate, Event, Session, SessionEnd
 };
 
 // One field of a hook event, as the host sent it

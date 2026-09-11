@@ -124,7 +124,21 @@ void testParseCommand(){
     CHECK(parseCommand("version").arg == "");
     CHECK(parseCommand("tool_start").kind == Command::ToolStart);
     CHECK(parseCommand("tool_stop").kind == Command::ToolStop);
-    CHECK(kProtocolVersion == 4);
+    CHECK(kProtocolVersion == 5);
+
+    ParsedCommand se = parseCommand("session 33db5bf1-e7eb\tlabel=claude-monitor\tstate=waiting_user\tsubagents=0\ttool=1");
+    CHECK(se.kind == Command::Session);
+    HookEvent sl;
+    CHECK(parseEventLine(se.arg, sl));
+    CHECK(sl.name == "33db5bf1-e7eb");
+    State st;
+    CHECK(parseState(sl.find("state"), st) && st == State::WaitingUser);
+    CHECK(std::string(sl.find("tool")) == "1");
+    CHECK(parseCommand("session_end 33db5bf1-e7eb").kind == Command::SessionEnd);
+    CHECK(parseCommand("session_end 33db5bf1-e7eb").arg == "33db5bf1-e7eb");
+    CHECK(parseCommand("session_clear").kind == Command::SessionClear);
+    CHECK(!parseState("bogus", st));
+    CHECK(parseState("idle", st) && st == State::Idle);
 
     ParsedCommand ev = parseCommand("event PostToolUse\tsummary=PostToolUse/Bash\tsession_id=abc");
     CHECK(ev.kind == Command::Event);

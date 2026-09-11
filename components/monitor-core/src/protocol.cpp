@@ -18,6 +18,20 @@ const char* stateName(State s){
     return "?";
 }
 
+bool parseState(std::string_view name, State& out){
+    static const State kStates[] = {
+        State::Processing, State::WaitingUser, State::Question, State::Error,
+        State::Paused, State::Compacting, State::Idle, State::Off,
+    };
+    for (State s : kStates){
+        if (name == stateName(s)){
+            out = s;
+            return true;
+        }
+    }
+    return false;
+}
+
 char sessionCode(State s){
     switch(s){
         case State::Processing:  return 'p';
@@ -101,16 +115,25 @@ ParsedCommand parseCommand(std::string_view line){
         cmd.arg = std::string(arg);
         return cmd;
     }
-    static const State kStates[] = {
-        State::Processing, State::WaitingUser, State::Question, State::Error,
-        State::Paused, State::Compacting, State::Idle, State::Off,
-    };
-    for (State s : kStates){
-        if (word == stateName(s)){
-            cmd.kind = Command::SetState;
-            cmd.state = s;
-            return cmd;
-        }
+    if (word == "session"){
+        cmd.kind = Command::Session;
+        cmd.arg = std::string(arg);
+        return cmd;
+    }
+    if (word == "session_end"){
+        cmd.kind = Command::SessionEnd;
+        cmd.arg = std::string(arg);
+        return cmd;
+    }
+    if (word == "session_clear"){
+        cmd.kind = Command::SessionClear;
+        return cmd;
+    }
+    State s;
+    if (parseState(word, s)){
+        cmd.kind = Command::SetState;
+        cmd.state = s;
+        return cmd;
     }
     return cmd;   // Unknown: silently ignored by the caller
 }

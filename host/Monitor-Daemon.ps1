@@ -28,6 +28,12 @@
     tool_stop, a blue dot on the device), and the session's process going
     away means the session is dead.
 
+    A device whose VERSION lists "sessions" in features= (the Tab5) shows
+    one tile per live session: it gets a "session <id> label=.. state=..
+    subagents=.. tool=.." line whenever a session changes, "session_end"
+    when one leaves, and "session_clear" followed by all of them when the
+    port is reopened. The cube keeps getting the aggregate words.
+
     Every hook event, with all its fields, is also forwarded as one "event"
     line to a device whose VERSION lists "events" in features= (the Tab5's
     hook inspector); the AtomS3R never receives them. The line also names
@@ -340,11 +346,62 @@ $script:sessions = @{}   # session_id -> @{ state; subagents; last; transcript; 
 function Get-Session([string]$id) {
     if (-not $script:sessions.ContainsKey($id)) {
         $script:sessions[$id] = @{
-            state = 'idle'; subagents = 0; last = (Get-Date); transcript = $null; root = $null; project = $null
+            id = $id; state = 'idle'; subagents = 0; last = (Get-Date); first = (Get-Date); transcript = $null; root = $null; project = $null
             pid = 0; tools = @{}; dead = $false; short = $id.Substring(0, [Math]::Min(8, $id.Length))
         }
     }
     return $script:sessions[$id]
+}
+
+# What a tile is called: the project name, "#n" appended when several
+# live sessions share the project (numbered by age, so the numbers hold)
+function Get-SessionLabel($s) {
+    $name = if ($s.project) { [string]$s.project } else { [string]$s.short }
+    if (-not $s.project) { return $name }
+    $same = @($script:sessions.Values | Where-Object { $_.project -eq $s.project } | Sort-Object -Property first)
+    if ($same.Count -gt 1) {
+        for ($i = 0; $i -lt $same.Count; $i++) {
+            if ($same[$i].id -eq $s.id) { return "$name #$($i + 1)" }
+        }
+    }
+    return $name
+}
+
+# One line per live session for a board that shows tiles
+function Format-SessionLine([string]$id, $s) {
+    $tool = if ($s.tools.Count -gt 0) { 1 } else { 0 }
+    return "session $id`tlabel=$(Format-EventValue (Get-SessionLabel $s))`tstate=$($s.state)`tsubagents=$($s.subagents)`ttool=$tool`tproject=$(Format-EventValue $s.project)`troot=$(Format-EventValue $s.root)"
+}
+
+$script:deviceSessionLines = @{}   # session id -> the line the device last got
+
+# Keeps a "sessions"-capable device's tiles equal to the live sessions:
+# session_end for the ones that left, a session line for each that changed.
+# `force` starts from session_clear (the port was just reopened).
+function Send-SessionLines([bool]$force) {
+    if (-not $script:serial -or -not $script:deviceInfo) { return }
+    if (([string]$script:deviceInfo.features) -notmatch '(^|,)sessions(,|$)') { return }
+    if ($force) {
+        if (Send-Serial 'session_clear') { Log 'device <- session_clear' }
+        $script:deviceSessionLines = @{}
+    }
+    foreach ($id in @($script:deviceSessionLines.Keys)) {
+        if (-not $script:sessions.ContainsKey($id)) {
+            if (Send-Serial "session_end $id") {
+                Log "device <- session_end $id"
+                $script:deviceSessionLines.Remove($id)
+            }
+        }
+    }
+    foreach ($id in @($script:sessions.Keys)) {
+        $line = Format-SessionLine $id $script:sessions[$id]
+        if ($script:deviceSessionLines[$id] -ne $line) {
+            if (Send-Serial $line) {
+                Log "device <- $($line -replace "`t", ' ')"
+                $script:deviceSessionLines[$id] = $line
+            }
+        }
+    }
 }
 
 # Drops sessions that are silent for too long, and processing/compacting
@@ -411,7 +468,10 @@ function Get-EffectiveState {
 # what changed. `force` re-sends everything (after the port was reopened).
 function Sync-Device([bool]$force = $false) {
     if (-not $script:serial) { return }
-    if ($script:sessions.Count -eq 0 -and -not $script:deviceState) { return }   # nothing known yet
+    if ($script:sessions.Count -eq 0 -and -not $script:deviceState) {   # nothing known yet
+        Send-SessionLines $force
+        return
+    }
 
     $eff = Get-EffectiveState
     if ($force -or $eff -ne $script:deviceState) {
@@ -459,6 +519,8 @@ function Sync-Device([bool]$force = $false) {
             $script:deviceTool = $tool
         }
     }
+
+    Send-SessionLines $force
 }
 
 # ---------------- hook events -> the device's inspector ----------------
@@ -577,18 +639,22 @@ function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
             else { $null }
     $project = Get-ProjectName $root
 
-    # Every event goes to the inspector, the ring and the JSON log, mapped or not
+    # Every event goes to the inspector, the ring and the JSON log, mapped or
+    # not; the device gets it after its session line (Sync-Device below)
     $eventLine = Format-EventLine $e $tag $project $root
     Add-Event $tag $eventLine
-    Send-Event $eventLine
     if ($LogEvents) { Write-EventLog $e }
 
     $cmd = Map-Event $e
     if (-not $cmd) {
         Log "hook $tag session=$short project=$project : ignored"
+        Send-Event $eventLine
         return
     }
+    $eventSent = $false
     if ($e.hook_event_name -eq 'SessionEnd') {
+        Send-Event $eventLine   # the tile sees its last event before session_end takes it down
+        $eventSent = $true
         $script:sessions.Remove($sid)
     } else {
         $s = Get-Session $sid
@@ -618,6 +684,7 @@ function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
     Log "hook $tag session=$short project=$project -> $cmd (sessions=$($script:sessions.Count))"
     Expire-Sessions
     Sync-Device
+    if (-not $eventSent) { Send-Event $eventLine }
 }
 
 # ---------------- http ----------------
@@ -803,6 +870,7 @@ try {
                 $script:deviceSubagents = 0
                 $script:deviceSessions = $null
                 $script:deviceTool = $false
+                $script:deviceSessionLines = @{}
                 $script:lastInfoTry = $now
                 Read-DeviceInfo | Out-Null
                 Sync-Device $true
@@ -824,7 +892,9 @@ try {
             if ($line -match 'STATUS|VERSION|ERROR') { Log "device: $($line.Trim())" }
         }
         if (($now - $lastHousekeeping).TotalSeconds -ge 60) {
+            $before = $script:sessions.Count
             Expire-Sessions
+            if ($script:sessions.Count -ne $before) { Sync-Device }
             Update-ProjectNames
             $lastHousekeeping = $now
         }

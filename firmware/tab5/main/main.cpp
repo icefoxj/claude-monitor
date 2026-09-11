@@ -1,17 +1,25 @@
 // claude-monitor on the M5Stack Tab5 (ESP32-P4): 5" 1280x720 IPS panel
-// with capacitive touch, BMI270 IMU, 32 MB PSRAM, USB-C on the P4's USB
-// Serial/JTAG.
+// with capacitive touch, BMI270 IMU, speaker, 32 MB PSRAM, USB-C on the
+// P4's USB Serial/JTAG.
 //
-// Layout: the status icon and, next to it, the hook inspector: every field
-// of the last Claude Code hook event the host forwarded, plus a short
-// history. This is the raw material for the multi-session mode: first see
-// what the hooks deliver, then design.
+// Multi-session view: one tile per live Claude Code session (up to six),
+// the screen split by how many there are (1, 2, 2x2, 3x2). A tile shows
+// the session's name above its status icon and, below it, a clock with
+// the time the current icon has been up, reset on every change. A tap on
+// a tile opens the detail page: the same icon, name and clock next to the
+// hook inspector for that session (every field of its last hook event and
+// a short history); a tap anywhere on the detail page goes back. A short
+// two-tone beep marks a red icon appearing (permission wanted, or error).
 //
-// The whole display turns with gravity in 90-degree steps, like a tablet:
-// landscape puts the icon on the left and the inspector on the right,
-// portrait puts the icon on top. Which way the sensor maps to the panel is
-// calibrated per unit with "calibrate rot=<upright rotation now> sign=<1|-1>"
-// and stored in NVS.
+// The whole display turns with gravity in 90-degree steps, like a tablet;
+// which way the sensor maps to the panel is calibrated per unit with
+// "calibrate rot=<upright rotation now> sign=<1|-1>" and stored in NVS.
+//
+// The host sends one "session" line per live session (state, label,
+// subagents, tool flag) and "event" lines with the hook payloads; the
+// aggregate state words the cube uses are still accepted and drive a
+// single placeholder tile while no session lines have arrived (manual
+// tests, older daemons).
 //
 // Everything board-independent (protocol, icons, orientation, state
 // machine, event log and view, calibration storage) is in the monitor-core
@@ -30,10 +38,13 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "monitor/calibration.h"
 #include "monitor/eventlog.h"
@@ -49,36 +60,25 @@ namespace {
 
 constexpr const char* TAG       = "monitor";
 constexpr const char* kBoard    = "tab5";
-constexpr const char* kFeatures = "events,touch,rotate";   // the host streams hook events to us
+constexpr const char* kFeatures = "events,touch,rotate,sessions";
 constexpr float kPi = 3.14159265f;
 
-constexpr int kIconSize = 480;
-constexpr int kViewW    = 720;
-constexpr int kViewH    = 720;
-
-// Where the two canvases go for each display rotation. Landscape (1280x720,
-// rotations 1 and 3): icon in a 560 px column on the left, inspector on the
-// right. Portrait (720x1280, rotations 0 and 2): icon in a 560 px band on
-// top, inspector below.
-struct Layout { int iconX, iconY, viewX, viewY; };
-
-Layout layoutFor(int rotation){
-    if (rotation & 1){
-        return { 40, 120, 560, 0 };
-    }
-    return { 120, 40, 0, 560 };
-}
+constexpr int kMaxSessions = 6;
+constexpr int kTextBand    = 52;    // px above (name) and below (clock) a tile's icon
+constexpr int kTileGap     = 16;    // px between an icon and the tile's side
+constexpr int kViewW       = 720;   // the inspector canvas on the detail page
+constexpr int kViewH       = 720;
 
 constexpr uint8_t kBrightness    = 160;
 constexpr uint8_t kDimBrightness = 40;    // while the host's heartbeat is missing
+constexpr uint8_t kVolume        = 128;
 
-// Idle, or without a host, for this long (frames at ~30 fps): screen off
-// until the next state change or a tap
+// Every tile idle, or no host, for this long (frames at ~30 fps): screen
+// off until the next state change or a tap
 constexpr int kAutoOffFrames = 30 * 60 * 30;   // 30 min
 
-// The inspector redraws on every event and state change, and once a
-// second so the "ago" ages move
-constexpr int kViewRefreshFrames = 30;
+// Names, clocks and the inspector refresh once a second
+constexpr int kTextRefreshFrames = 30;
 
 // ---------------- orientation calibration for this unit ----------------
 //
@@ -91,13 +91,62 @@ constexpr int kViewRefreshFrames = 30;
 constexpr int kDefaultOffset = 3;
 constexpr int kDefaultSign   = 1;
 
-// Both canvases live in PSRAM: 480x480x2 = 450 KB, 720x720x2 = 1 MB
-M5Canvas iconCanvas(&M5.Display);
-M5Canvas viewCanvas(&M5.Display);
+struct Rect { int x = 0, y = 0, w = 0, h = 0; bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; } };
 
 int64_t nowMs(){
     return esp_timer_get_time() / 1000;
 }
+
+// One session and everything that draws it. The canvas lives in PSRAM and
+// is recreated at the size the current layout gives the tile.
+struct Slot {
+    std::string id;
+    std::string label;
+    M5Canvas canvas{&M5.Display};
+    monitor::Icons icons;
+    monitor::Ui ui;
+    monitor::EventLog log{12};
+    int  size = 0;        // canvas size in px, 0 = not created yet
+    int  x = 0, y = 0;    // where the canvas is pushed
+    Rect tile;            // the tile on screen, for touch and the texts
+    bool used = false;
+
+    Slot() : icons(canvas, 1, 0, 0), ui(icons, monitor::TiltConfig{}) {}
+
+    void place(int newSize, int px, int py){
+        if (newSize != size){
+            if (size > 0){
+                canvas.deleteSprite();
+            }
+            canvas.setPsram(true);
+            canvas.setColorDepth(16);
+            if (!canvas.createSprite(newSize, newSize)){
+                ESP_LOGE(TAG, "canvas of %d px failed (PSRAM?)", newSize);
+            }
+            size = newSize;
+        }
+        x = px;
+        y = py;
+        icons.setSize(newSize, px, py);
+    }
+
+    void reset(){
+        ui.setVisible(false);
+        ui.apply(monitor::State::Off);
+        id.clear();
+        label.clear();
+        log = monitor::EventLog(12);
+        used = false;
+    }
+};
+
+std::array<Slot, kMaxSessions> slots;
+Slot placeholder;   // shown while no session lines have arrived; driven by the aggregate words
+M5Canvas viewCanvas(&M5.Display);
+
+enum class View { Grid, Detail };
+
+// ---------------- serial ----------------
 
 void writeLine(const char* msg, int n){
     if (n > 0){
@@ -121,36 +170,63 @@ const char* screenName(uint8_t brightness){
     return "on";
 }
 
-// Same shape as the AtomS3R's STATUS so the host's parsers work unchanged.
-// rot = the display rotation in effect, angle = the gravity direction in
-// the panel plane (degrees), offset = the calibration's sector-0 rotation,
-// sector = the quantised gravity direction.
-void sendStatus(const monitor::Ui& ui, const monitor::EventLog& log, const monitor::Orientation& orient,
-                uint8_t brightness, float ax, float ay, float az){
-    const char* sessions = ui.sessions();
-    const char* link = !ui.linkArmed() ? "unarmed" : (ui.linkLost() ? "lost" : "ok");
-    char msg[288];
-    int n = snprintf(msg, sizeof(msg),
-                     "STATUS state=%s subagents=%d rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f"
-                     " fw=%s board=%s sign=%d offset=%d sessions=%s link=%s work=%d screen=%s tool=%d"
-                     " events=%lu sector=%d\n",
-                     monitor::stateName(ui.state()), ui.subagents(), M5.Display.getRotation(),
-                     atan2f(ay, ax) * 180.0f / kPi, ax, ay, az,
-                     esp_app_get_description()->version, kBoard,
-                     orient.config().sign, orient.config().offset,
-                     sessions[0] ? sessions : "-", link, ui.workFrames() / 30, screenName(brightness),
-                     ui.toolRunning() ? 1 : 0,
-                     static_cast<unsigned long>(log.count()), orient.sector());
-    writeLine(msg, n);
+// ---------------- sound ----------------
+
+// Two notes, the second five frames after the first, without blocking the loop
+struct Beep {
+    int   frame = -1;
+    float f1 = 0, f2 = 0;
+};
+Beep beep;
+
+void startBeep(monitor::State s){
+    beep.frame = 0;
+    if (s == monitor::State::Error){
+        beep.f1 = 660; beep.f2 = 440;    // falling: something broke
+    } else {
+        beep.f1 = 880; beep.f2 = 1175;   // rising: your turn
+    }
 }
 
-// Header of the inspector: what the icon side is showing
-void statusText(const monitor::Ui& ui, char* out, size_t size){
-    const char* sessions = ui.sessions();
-    const char* link = !ui.linkArmed() ? "no host yet" : (ui.linkLost() ? "host lost" : "host ok");
-    snprintf(out, size, "%s%s   sessions %s   %s",
-             monitor::stateName(ui.state()), ui.toolRunning() ? " (tool running)" : "",
-             sessions[0] ? sessions : "-", link);
+void tickBeep(){
+    if (beep.frame < 0) return;
+    if (beep.frame == 0) M5.Speaker.tone(beep.f1, 120);
+    if (beep.frame == 5) M5.Speaker.tone(beep.f2, 180);
+    if (++beep.frame > 6) beep.frame = -1;
+}
+
+// ---------------- text helpers ----------------
+
+void clockText(int frames, char* out, size_t size){
+    int s = frames / 30;
+    if (s >= 3600){
+        snprintf(out, size, "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60);
+    } else {
+        snprintf(out, size, "%02d:%02d", s / 60, s % 60);
+    }
+}
+
+void drawCentred(const char* text, int cx, int cy, int bandW, const lgfx::IFont* font, uint16_t color){
+    M5.Display.setFont(font);
+    M5.Display.setTextDatum(textdatum_t::middle_center);
+    M5.Display.setTextColor(color, TFT_BLACK);
+    int h = M5.Display.fontHeight() + 8;
+    M5.Display.fillRect(cx - bandW / 2, cy - h / 2, bandW, h, TFT_BLACK);
+    M5.Display.drawString(text, cx, cy);
+}
+
+int priorityOf(monitor::State s){
+    switch (s){
+        case monitor::State::Error:       return 6;
+        case monitor::State::WaitingUser: return 5;
+        case monitor::State::Question:    return 5;
+        case monitor::State::Paused:      return 4;
+        case monitor::State::Compacting:  return 3;
+        case monitor::State::Processing:  return 2;
+        case monitor::State::Idle:        return 1;
+        case monitor::State::Off:         return 0;
+    }
+    return 0;
 }
 
 }  // namespace
@@ -160,6 +236,7 @@ extern "C" void app_main(void){
     M5.begin(cfg);
     M5.Display.setBrightness(kBrightness);
     M5.Display.fillScreen(TFT_BLACK);
+    M5.Speaker.setVolume(kVolume);
 
     const bool nvsOK = monitor::initCalibrationStorage();
     monitor::Calibration cal;
@@ -174,10 +251,10 @@ extern "C" void app_main(void){
     monitor::Orientation orient(orientCfg);
 
     bool imuOK = M5.Imu.isEnabled();
-    ESP_LOGI(TAG, "imu %s, orientation offset %d sign %d (%s)",
-             imuOK ? "enabled" : "absent", orientCfg.offset, orientCfg.sign, stored ? "from nvs" : "compiled");
+    ESP_LOGI(TAG, "imu %s, speaker %s, orientation offset %d sign %d (%s)",
+             imuOK ? "enabled" : "absent", M5.Speaker.isEnabled() ? "enabled" : "absent",
+             orientCfg.offset, orientCfg.sign, stored ? "from nvs" : "compiled");
 
-    // Start in landscape; the first accelerometer sample decides for real
     float ax = 0.0f, ay = 0.0f, az = 0.0f;
     int rotation = 1;
     if (imuOK){
@@ -188,30 +265,199 @@ extern "C" void app_main(void){
         }
     }
     M5.Display.setRotation(rotation);
-    Layout layout = layoutFor(rotation);
     ESP_LOGI(TAG, "display %dx%d rotation %d", M5.Display.width(), M5.Display.height(), rotation);
 
-    iconCanvas.setPsram(true);
-    iconCanvas.setColorDepth(16);
-    if (!iconCanvas.createSprite(kIconSize, kIconSize)){
-        ESP_LOGE(TAG, "icon canvas allocation failed (PSRAM?)");
-    }
     viewCanvas.setPsram(true);
     viewCanvas.setColorDepth(16);
     if (!viewCanvas.createSprite(kViewW, kViewH)){
         ESP_LOGE(TAG, "inspector canvas allocation failed (PSRAM?)");
     }
+    monitor::EventView inspector(viewCanvas, 560, 0);
 
-    monitor::Icons icons(iconCanvas, kIconSize, layout.iconX, layout.iconY);
-    monitor::TiltConfig tiltCfg;   // unused: the icon is not tilted, the whole display turns
-    monitor::Ui ui(icons, tiltCfg);
-    monitor::EventLog log(16);
-    monitor::EventView view(viewCanvas, layout.viewX, layout.viewY);
+    placeholder.label = "claude";
+    placeholder.used  = true;
+    placeholder.ui.setVisible(false);
+    placeholder.ui.apply(monitor::State::Idle);
+    for (auto& s : slots){
+        s.ui.setVisible(false);
+    }
 
-    ui.apply(monitor::State::Idle);
-    char status[96];
-    statusText(ui, status, sizeof(status));
-    view.draw(log, status, nowMs());
+    View  view       = View::Grid;
+    Slot* detail     = nullptr;
+    bool  relayout   = true;
+    bool  textDirty  = true;
+    bool  viewDirty  = true;
+    Rect  detailLabel, detailClock;   // text bands on the detail page
+
+    // The tiles on screen: the live sessions, or the placeholder
+    auto visibleSlots = [&]() {
+        std::vector<Slot*> v;
+        for (auto& s : slots) if (s.used) v.push_back(&s);
+        if (v.empty()) v.push_back(&placeholder);
+        return v;
+    };
+
+    auto findSlot = [&](const std::string& id) -> Slot* {
+        for (auto& s : slots) if (s.used && s.id == id) return &s;
+        return nullptr;
+    };
+
+    auto allocSlot = [&](const std::string& id) -> Slot* {
+        for (auto& s : slots){
+            if (!s.used){
+                s.used = true;
+                s.id = id;
+                s.ui.setVisible(false);
+                s.ui.apply(monitor::State::Idle);
+                return &s;
+            }
+        }
+        ESP_LOGW(TAG, "session %s ignored: %d tiles already", id.c_str(), kMaxSessions);
+        return nullptr;
+    };
+
+    auto endSlot = [&](Slot* s) {
+        if (detail == s){
+            detail = nullptr;
+            view = View::Grid;
+        }
+        s->reset();
+    };
+
+    // Lays the tiles (or the detail page) out for the current rotation
+    auto applyLayout = [&]() {
+        const int W = M5.Display.width();
+        const int H = M5.Display.height();
+        const bool landscape = W > H;
+        M5.Display.fillScreen(TFT_BLACK);
+        for (auto& s : slots) s.ui.setVisible(false);
+        placeholder.ui.setVisible(false);
+
+        if (view == View::Detail && detail && detail->used){
+            int iconSize, ix, iy;
+            if (landscape){
+                iconSize = 480; ix = 40; iy = 120;
+                inspector.setOrigin(560, 0);
+                detailLabel = { 40, 40, 480, 60 };
+                detailClock = { 40, 620, 480, 60 };
+            } else {
+                iconSize = 400; ix = 160; iy = 80;
+                inspector.setOrigin(0, 560);
+                detailLabel = { 160, 10, 400, 60 };
+                detailClock = { 160, 490, 400, 60 };
+            }
+            detail->place(iconSize, ix, iy);
+            detail->ui.setVisible(true);
+            detail->ui.redraw();
+            viewDirty = true;
+        } else {
+            view = View::Grid;
+            auto vis = visibleSlots();
+            const int n = static_cast<int>(vis.size());
+            int cols, rows;
+            if (n <= 1)      { cols = 1; rows = 1; }
+            else if (n == 2) { cols = landscape ? 2 : 1; rows = landscape ? 1 : 2; }
+            else if (n <= 4) { cols = 2; rows = 2; }
+            else             { cols = landscape ? 3 : 2; rows = landscape ? 2 : 3; }
+            const int tw = W / cols;
+            const int th = H / rows;
+            int iconSize = tw - 2 * kTileGap;
+            if (th - 2 * kTextBand < iconSize) iconSize = th - 2 * kTextBand;
+            iconSize &= ~1;
+            for (int i = 0; i < n; i++){
+                Slot* s = vis[i];
+                s->tile = { (i % cols) * tw, (i / cols) * th, tw, th };
+                int ix = s->tile.x + (tw - iconSize) / 2;
+                int iy = s->tile.y + kTextBand + (th - 2 * kTextBand - iconSize) / 2;
+                s->place(iconSize, ix, iy);
+                s->ui.setVisible(true);
+                s->ui.redraw();
+            }
+        }
+        textDirty = true;
+    };
+
+    // Names and clocks (and the inspector on the detail page)
+    auto drawTexts = [&]() {
+        char clock[16];
+        if (view == View::Detail && detail){
+            clockText(detail->ui.framesInState(), clock, sizeof(clock));
+            drawCentred(detail->label.c_str(), detailLabel.x + detailLabel.w / 2, detailLabel.y + detailLabel.h / 2,
+                        detailLabel.w, &fonts::DejaVu24, TFT_WHITE);
+            drawCentred(clock, detailClock.x + detailClock.w / 2, detailClock.y + detailClock.h / 2,
+                        detailClock.w, &fonts::DejaVu24, TFT_LIGHTGREY);
+        } else {
+            for (Slot* s : visibleSlots()){
+                clockText(s->ui.framesInState(), clock, sizeof(clock));
+                drawCentred(s->label.c_str(), s->tile.x + s->tile.w / 2, s->tile.y + kTextBand / 2,
+                            s->tile.w, &fonts::DejaVu24, TFT_WHITE);
+                drawCentred(clock, s->tile.x + s->tile.w / 2, s->tile.y + s->tile.h - kTextBand / 2,
+                            s->tile.w, &fonts::DejaVu24, TFT_LIGHTGREY);
+            }
+        }
+    };
+
+    auto drawInspector = [&]() {
+        if (view != View::Detail || !detail) return;
+        char status[128];
+        const char* link = !detail->ui.linkArmed() ? "no host yet" : (detail->ui.linkLost() ? "host lost" : "host ok");
+        snprintf(status, sizeof(status), "%s%s   %s",
+                 monitor::stateName(detail->ui.state()), detail->ui.toolRunning() ? " (tool running)" : "", link);
+        inspector.draw(detail->log, status, nowMs());
+    };
+
+    // A state change on a visible tile: wake the screen, beep on red
+    auto applyState = [&](Slot* s, monitor::State st, bool& woke) {
+        if (s->ui.apply(st)){
+            woke = true;
+            textDirty = true;
+            if (s->ui.visible() && (st == monitor::State::WaitingUser || st == monitor::State::Error)){
+                startBeep(st);
+            }
+        }
+    };
+
+    // Highest-priority state among the tiles on screen
+    auto aggregateState = [&]() {
+        monitor::State best = monitor::State::Off;
+        for (Slot* s : visibleSlots()){
+            if (priorityOf(s->ui.state()) > priorityOf(best)) best = s->ui.state();
+        }
+        return best;
+    };
+
+    auto sendStatus = [&](uint8_t brightness) {
+        std::string codes;
+        int events = 0;
+        for (auto& s : slots){
+            if (s.used){
+                codes += monitor::sessionCode(s.ui.state());
+                events += static_cast<int>(s.log.count());
+            }
+        }
+        monitor::State agg = aggregateState();
+        bool tool = false, lost = false, armed = false;
+        int work = 0;
+        for (Slot* s : visibleSlots()){
+            if (s->ui.state() == agg){ tool = tool || s->ui.toolRunning(); work = s->ui.workFrames() / 30; }
+            lost = lost || s->ui.linkLost();
+            armed = armed || s->ui.linkArmed();
+        }
+        const char* link = !armed ? "unarmed" : (lost ? "lost" : "ok");
+        char msg[320];
+        int n = snprintf(msg, sizeof(msg),
+                         "STATUS state=%s subagents=0 rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f"
+                         " fw=%s board=%s sign=%d offset=%d sessions=%s link=%s work=%d screen=%s tool=%d"
+                         " events=%d sector=%d tiles=%d view=%s\n",
+                         monitor::stateName(agg), M5.Display.getRotation(),
+                         atan2f(ay, ax) * 180.0f / kPi, ax, ay, az,
+                         esp_app_get_description()->version, kBoard,
+                         orient.config().sign, orient.config().offset,
+                         codes.empty() ? "-" : codes.c_str(), link, work, screenName(brightness), tool ? 1 : 0,
+                         events, orient.sector(), static_cast<int>(visibleSlots().size()),
+                         view == View::Detail ? "detail" : "grid");
+        writeLine(msg, n);
+    };
 
     // USB Serial/JTAG driver: event lines can be a few KB, so a roomy
     // receive buffer and big reads
@@ -222,26 +468,14 @@ extern "C" void app_main(void){
     ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&usbCfg));
     sendVersion();   // announce once, through the driver
 
-    // Turns the display and moves both canvases
-    auto applyRotation = [&](int r){
-        rotation = r;
-        M5.Display.setRotation(r);
-        M5.Display.fillScreen(TFT_BLACK);
-        layout = layoutFor(r);
-        icons.setOrigin(layout.iconX, layout.iconY);
-        view.setOrigin(layout.viewX, layout.viewY);
-        ui.redraw();
-        ESP_LOGI(TAG, "rotation %d (sector %d)", r, orient.sector());
-    };
-
     monitor::LineParser parser(4096);
     std::string line;
     uint8_t buf[512];
-    bool    screenOn   = true;    // a tap toggles it
     bool    autoOff    = false;   // switched off by the idle / no-host timer
     uint8_t brightness = kBrightness;
-    bool    viewDirty  = false;
     int     frame      = 0;
+    monitor::State lastAggregate = monitor::State::Off;
+    int     aggregateFrames = 0;
 
     while(true){
         M5.update();   // refreshes the touch state
@@ -251,13 +485,16 @@ extern "C" void app_main(void){
             M5.Imu.update();
             M5.Imu.getAccel(&ax, &ay, &az);
             if (orient.update(ax, ay, az) && orient.rotation() != rotation){
-                applyRotation(orient.rotation());
-                viewDirty = true;
+                rotation = orient.rotation();
+                M5.Display.setRotation(rotation);
+                ESP_LOGI(TAG, "rotation %d (sector %d)", rotation, orient.sector());
+                relayout = true;
             }
         }
 
         // The 33 ms timeout blocks waiting for data (no busy-wait) and sets
         // the ~30 fps pace of the animations
+        bool woke = false;
         int bytesRead = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(33));
         for (int i = 0; i < bytesRead; i++){
             if (!parser.feed(static_cast<char>(buf[i]), line)){
@@ -265,22 +502,77 @@ extern "C" void app_main(void){
             }
             auto cmd = monitor::parseCommand(line);
             if (cmd.kind != monitor::Command::Status && cmd.kind != monitor::Command::Version){
-                ui.noteCommand();
+                for (auto& s : slots) s.ui.noteCommand();
+                placeholder.ui.noteCommand();
             }
             switch (cmd.kind){
-                case monitor::Command::SetState:
-                    if (ui.apply(cmd.state)){
-                        autoOff = false;
+                case monitor::Command::Session: {
+                    monitor::HookEvent ev;
+                    if (!monitor::parseEventLine(cmd.arg, ev)) break;
+                    Slot* s = findSlot(ev.name);
+                    if (!s){
+                        s = allocSlot(ev.name);
+                        if (!s) break;
+                        relayout = true;
                     }
-                    viewDirty = true;
+                    const char* label = ev.find("label");
+                    if (label && label[0] && s->label != label){
+                        s->label = label;
+                        textDirty = true;
+                    }
+                    monitor::State st;
+                    const char* sn = ev.find("state");
+                    if (sn && monitor::parseState(sn, st)){
+                        applyState(s, st, woke);
+                    }
+                    const char* sa = ev.find("subagents");
+                    if (sa) s->ui.setSubagents(atoi(sa));
+                    const char* tl = ev.find("tool");
+                    if (tl) s->ui.setToolRunning(tl[0] == '1');
                     break;
-                case monitor::Command::SubagentStart: ui.subagentStart(); viewDirty = true; break;
-                case monitor::Command::SubagentStop:  ui.subagentStop();  viewDirty = true; break;
-                case monitor::Command::ToolStart:     ui.toolStart(); viewDirty = true; break;
-                case monitor::Command::ToolStop:      ui.toolStop();  viewDirty = true; break;
-                case monitor::Command::Sessions:      ui.setSessions(cmd.arg); viewDirty = true; break;
-                case monitor::Command::Ping:          ui.ping(); break;
-                case monitor::Command::Status:        sendStatus(ui, log, orient, brightness, ax, ay, az); break;
+                }
+                case monitor::Command::SessionEnd: {
+                    Slot* s = findSlot(cmd.arg);
+                    if (s){
+                        endSlot(s);
+                        relayout = true;
+                    }
+                    break;
+                }
+                case monitor::Command::SessionClear:
+                    for (auto& s : slots) if (s.used) endSlot(&s);
+                    relayout = true;
+                    break;
+                case monitor::Command::Event: {
+                    monitor::HookEvent ev;
+                    if (!monitor::parseEventLine(cmd.arg, ev)) break;
+                    const char* sid = ev.find("session_id");
+                    Slot* s = sid ? findSlot(sid) : nullptr;
+                    if (!s && sid && ev.name != "SessionEnd"){
+                        s = allocSlot(sid);   // the event beat its session line
+                        if (s){
+                            const char* p = ev.find("project");
+                            s->label = p ? p : "";
+                            relayout = true;
+                        }
+                    }
+                    if (s){
+                        s->log.push(std::move(ev), nowMs());
+                        if (view == View::Detail && detail == s) viewDirty = true;
+                    }
+                    break;
+                }
+                case monitor::Command::SetState:      applyState(&placeholder, cmd.state, woke); break;
+                case monitor::Command::SubagentStart: placeholder.ui.subagentStart(); break;
+                case monitor::Command::SubagentStop:  placeholder.ui.subagentStop(); break;
+                case monitor::Command::ToolStart:     placeholder.ui.toolStart(); break;
+                case monitor::Command::ToolStop:      placeholder.ui.toolStop(); break;
+                case monitor::Command::Sessions:      break;   // the aggregate codes: the tiles say it
+                case monitor::Command::Ping:
+                    for (auto& s : slots) s.ui.ping();
+                    placeholder.ui.ping();
+                    break;
+                case monitor::Command::Status:        sendStatus(brightness); break;
                 case monitor::Command::Version:       sendVersion(); break;
                 case monitor::Command::Calibrate: {
                     monitor::CalibrationRequest req;
@@ -306,53 +598,85 @@ extern "C" void app_main(void){
                     ESP_LOGI(TAG, "calibration %s: offset %d sign %d (%s)",
                              req.reset ? "reset" : "set", next.offset, next.sign, saved ? "stored" : "not stored");
                     if (orient.valid() && orient.rotation() != rotation){
-                        applyRotation(orient.rotation());
-                        viewDirty = true;
+                        rotation = orient.rotation();
+                        M5.Display.setRotation(rotation);
+                        relayout = true;
                     }
-                    sendStatus(ui, log, orient, brightness, ax, ay, az);
-                    break;
-                }
-                case monitor::Command::Event: {
-                    monitor::HookEvent ev;
-                    if (monitor::parseEventLine(cmd.arg, ev)){
-                        log.push(std::move(ev), nowMs());
-                        viewDirty = true;
-                    }
+                    sendStatus(brightness);
                     break;
                 }
                 case monitor::Command::Unknown: break;
             }
         }
 
-        // Screen policy: a tap toggles; a long idle or a long silence from
-        // the host switches off until something changes; a lost heartbeat dims
-        if (M5.Touch.getDetail().wasClicked()){
+        // Touch: wake, open a tile's detail page, or leave it
+        auto t = M5.Touch.getDetail();
+        if (t.wasClicked()){
             if (autoOff){
-                autoOff  = false;
-                screenOn = true;
+                autoOff = false;
+            } else if (view == View::Detail){
+                view = View::Grid;
+                detail = nullptr;
+                relayout = true;
             } else {
-                screenOn = !screenOn;
+                for (Slot* s : visibleSlots()){
+                    if (s->tile.contains(t.x, t.y)){
+                        detail = s;
+                        view = View::Detail;
+                        relayout = true;
+                        break;
+                    }
+                }
             }
         }
-        bool idleLong = ui.state() == monitor::State::Idle && ui.framesInState() >= kAutoOffFrames;
-        bool hostGone = ui.linkLost() && ui.framesSinceCommand() >= kAutoOffFrames;
+        if (woke){
+            autoOff = false;
+        }
+
+        if (relayout){
+            applyLayout();
+            relayout = false;
+        }
+
+        // Screen policy: everything idle for 30 min, or no host for 30 min,
+        // switches off until something changes or a tap; a lost heartbeat dims
+        monitor::State agg = aggregateState();
+        if (agg != lastAggregate){
+            lastAggregate = agg;
+            aggregateFrames = 0;
+        } else {
+            ++aggregateFrames;
+        }
+        bool lost = false;
+        int  silent = 0;
+        for (Slot* s : visibleSlots()){
+            lost = lost || s->ui.linkLost();
+            if (s->ui.framesSinceCommand() > silent) silent = s->ui.framesSinceCommand();
+        }
+        bool idleLong = agg == monitor::State::Idle && aggregateFrames >= kAutoOffFrames;
+        bool hostGone = lost && silent >= kAutoOffFrames;
         if (!autoOff && (idleLong || hostGone)){
             autoOff = true;
             ESP_LOGI(TAG, "screen off: %s", idleLong ? "idle for 30 min" : "no host for 30 min");
         }
-        const bool displayOn = screenOn && !autoOff;
-        uint8_t want = !displayOn ? 0 : (ui.linkLost() ? kDimBrightness : kBrightness);
+        uint8_t want = autoOff ? 0 : (lost ? kDimBrightness : kBrightness);
         if (want != brightness){
             brightness = want;
             M5.Display.setBrightness(brightness);
         }
+        const bool displayOn = !autoOff;
 
-        ui.tick(displayOn);
+        for (auto& s : slots) s.ui.tick(displayOn && s.ui.visible());
+        placeholder.ui.tick(displayOn && placeholder.ui.visible());
+        tickBeep();
 
         ++frame;
-        if (displayOn && (viewDirty || frame % kViewRefreshFrames == 0)){
-            statusText(ui, status, sizeof(status));
-            view.draw(log, status, nowMs());
+        if (displayOn && (textDirty || frame % kTextRefreshFrames == 0)){
+            drawTexts();
+            textDirty = false;
+        }
+        if (displayOn && view == View::Detail && (viewDirty || frame % kTextRefreshFrames == 0)){
+            drawInspector();
             viewDirty = false;
         }
     }

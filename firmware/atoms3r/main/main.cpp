@@ -241,8 +241,11 @@ extern "C" void app_main(void){
                     sendStatus(ui, cal, brightness, ax, ay, az);
                     break;
                 }
-                case monitor::Command::Event:   break;   // not shown on this board (and never sent to it)
-                case monitor::Command::Unknown: break;
+                case monitor::Command::Event:        break;   // not shown on this board (and never sent to it)
+                case monitor::Command::Session:      break;   // per-session lines: same, the cube shows the aggregate
+                case monitor::Command::SessionEnd:   break;
+                case monitor::Command::SessionClear: break;
+                case monitor::Command::Unknown:      break;
             }
         }
 
