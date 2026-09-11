@@ -65,18 +65,20 @@ constexpr float kPi = 3.14159265f;
 
 constexpr int   kMaxSessions = 6;
 constexpr int   kTileGap     = 16;     // px between an icon and the tile's side
-constexpr float kIconScale   = 0.85f;  // the icon takes this much of the room the texts leave
+constexpr float kIconScale   = 0.80f;  // the icon takes this much of the room the texts leave
 constexpr int   kViewW       = 720;    // the inspector canvas on the detail page
 constexpr int   kViewH       = 720;
 
 // Name and clock: a bigger face when the tiles are tall, and a text band
-// (above for the name, below for the clock) sized for it
+// (above for the name, below for the clock) just tall enough for it, so
+// the texts sit close to the icon; the group name + icon + clock is then
+// centred in the tile
 struct TextStyle { const lgfx::IFont* font; int band; };
 
 TextStyle textStyleFor(int tileHeight){
-    if (tileHeight >= 600) return { &fonts::DejaVu40, 72 };
-    if (tileHeight >= 300) return { &fonts::DejaVu24, 52 };
-    return { &fonts::DejaVu18, 40 };
+    if (tileHeight >= 600) return { &fonts::DejaVu40, 56 };
+    if (tileHeight >= 300) return { &fonts::DejaVu24, 40 };
+    return { &fonts::DejaVu18, 32 };
 }
 
 constexpr uint8_t kBrightness    = 160;
@@ -119,6 +121,8 @@ struct Slot {
     int  size = 0;        // canvas size in px, 0 = not created yet
     int  x = 0, y = 0;    // where the canvas is pushed
     Rect tile;            // the tile on screen, for touch and the texts
+    int  nameY = 0;       // centre lines of the name above and the clock below the icon
+    int  clockY = 0;
     bool used = false;
 
     Slot() : icons(canvas, 1, 0, 0), ui(icons, monitor::TiltConfig{}) {}
@@ -354,10 +358,11 @@ extern "C" void app_main(void){
             int room = colH - 2 * style.band;
             if (colW - 2 * kTileGap < room) room = colW - 2 * kTileGap;
             int iconSize = static_cast<int>(room * kIconScale) & ~1;
+            int groupTop = colY + (colH - (2 * style.band + iconSize)) / 2;
             int ix = colX + (colW - iconSize) / 2;
-            int iy = colY + style.band + (colH - 2 * style.band - iconSize) / 2;
-            detailLabel = { colX, colY, colW, style.band };
-            detailClock = { colX, colY + colH - style.band, colW, style.band };
+            int iy = groupTop + style.band;
+            detailLabel = { colX, groupTop, colW, style.band };
+            detailClock = { colX, iy + iconSize, colW, style.band };
             detail->place(iconSize, ix, iy);
             detail->ui.setVisible(true);
             detail->ui.redraw();
@@ -380,8 +385,11 @@ extern "C" void app_main(void){
             for (int i = 0; i < n; i++){
                 Slot* s = vis[i];
                 s->tile = { (i % cols) * tw, (i / cols) * th, tw, th };
+                int groupTop = s->tile.y + (th - (2 * style.band + iconSize)) / 2;
                 int ix = s->tile.x + (tw - iconSize) / 2;
-                int iy = s->tile.y + style.band + (th - 2 * style.band - iconSize) / 2;
+                int iy = groupTop + style.band;
+                s->nameY  = groupTop + style.band / 2;
+                s->clockY = iy + iconSize + style.band / 2;
                 s->place(iconSize, ix, iy);
                 s->ui.setVisible(true);
                 s->ui.redraw();
@@ -402,9 +410,9 @@ extern "C" void app_main(void){
         } else {
             for (Slot* s : visibleSlots()){
                 clockText(s->ui.framesInState(), clock, sizeof(clock));
-                drawCentred(s->label.c_str(), s->tile.x + s->tile.w / 2, s->tile.y + style.band / 2,
+                drawCentred(s->label.c_str(), s->tile.x + s->tile.w / 2, s->nameY,
                             s->tile.w, style.font, TFT_WHITE);
-                drawCentred(clock, s->tile.x + s->tile.w / 2, s->tile.y + s->tile.h - style.band / 2,
+                drawCentred(clock, s->tile.x + s->tile.w / 2, s->clockY,
                             s->tile.w, style.font, TFT_LIGHTGREY);
             }
         }
