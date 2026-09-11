@@ -22,7 +22,10 @@
 
     Every hook event, with all its fields, is also forwarded as one "event"
     line to a device whose VERSION lists "events" in features= (the Tab5's
-    hook inspector); the AtomS3R never receives them. The last 50 are kept
+    hook inspector); the AtomS3R never receives them. The line also names
+    the session's project: the hooks send the X-Claude-Project header
+    (${CLAUDE_PROJECT_DIR}); its folder name is used unless ProjectsPath
+    (projects.json, { "root": "name" }) maps it to a nicer one. The last 50 are kept
     for GET /events, and with -LogEvents each raw payload is appended as
     one JSON line to EventLogPath (prompts and tool inputs included: mind
     what ends up in that file).
@@ -52,7 +55,8 @@ param(
     [int]$PingSeconds = 30,
     [switch]$LogEvents,
     [string]$EventLogPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\hooks.jsonl"),
-    [int]$EventValueMax = 160
+    [int]$EventValueMax = 160,
+    [string]$ProjectsPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\projects.json")
 )
 
 $ErrorActionPreference = 'Continue'
@@ -187,13 +191,55 @@ function Read-DeviceInfo {
     return $reply
 }
 
+# ---------------- projects ----------------
+#
+# The project a session belongs to comes from the X-Claude-Project header
+# the hooks send (${CLAUDE_PROJECT_DIR}, the root where the session
+# started); without the header, the cwd of the first event seen. The name
+# shown is the root's folder name unless projects.json maps the root to a
+# nicer one: { "E:\\work\\claude-monitor": "Monitor" }.
+
+$script:projectNames  = @{}
+$script:projectsMtime = [datetime]::MinValue
+
+function ConvertTo-RootKey([string]$root) {
+    return ($root -replace '[\\/]+$', '').ToLowerInvariant()
+}
+
+# Reloads projects.json when it changed (called at start and by housekeeping)
+function Update-ProjectNames {
+    try {
+        if (-not (Test-Path $ProjectsPath)) {
+            if ($script:projectNames.Count) { $script:projectNames = @{}; Log "projects: $ProjectsPath removed" }
+            return
+        }
+        $m = (Get-Item $ProjectsPath).LastWriteTime
+        if ($m -eq $script:projectsMtime) { return }
+        $obj = Get-Content $ProjectsPath -Raw | ConvertFrom-Json
+        $map = @{}
+        foreach ($p in $obj.PSObject.Properties) { $map[(ConvertTo-RootKey $p.Name)] = [string]$p.Value }
+        $script:projectNames  = $map
+        $script:projectsMtime = $m
+        Log "projects: $($map.Count) name(s) from $ProjectsPath"
+    } catch {
+        Log "projects: cannot read ${ProjectsPath}: $($_.Exception.Message)"
+    }
+}
+
+function Get-ProjectName([string]$root) {
+    if (-not $root) { return $null }
+    $key = ConvertTo-RootKey $root
+    if ($script:projectNames.ContainsKey($key)) { return $script:projectNames[$key] }
+    return Split-Path -Leaf ($root -replace '[\\/]+$', '')
+}
+
 # ---------------- sessions ----------------
 
-$script:sessions = @{}   # session_id -> @{ state; subagents; last; transcript; project }
+$script:sessions = @{}   # session_id -> @{ state; subagents; last; transcript; root; project }
 
 function Get-Session([string]$id) {
     if (-not $script:sessions.ContainsKey($id)) {
-        $script:sessions[$id] = @{ state = 'idle'; subagents = 0; last = (Get-Date); transcript = $null; project = $null }
+        $script:sessions[$id] = @{ state = 'idle'; subagents = 0; last = (Get-Date); transcript = $null; root = $null; project = $null }
     }
     return $script:sessions[$id]
 }
@@ -307,12 +353,15 @@ function Format-EventValue($v) {
     return $s
 }
 
-# "event <name>\tsummary=..\t<key>=<value>..": every top-level field of the
-# hook payload, objects flattened one level ("tool_input.command"), in the
-# order Claude Code sent them
-function Format-EventLine($e, [string]$tag) {
+# "event <name>\tsummary=..\tproject=..\tproject_root=..\t<key>=<value>..":
+# the daemon's own fields first, then every top-level field of the hook
+# payload, objects flattened one level ("tool_input.command"), in the order
+# Claude Code sent them
+function Format-EventLine($e, [string]$tag, [string]$project, [string]$root) {
     $parts = [System.Collections.Generic.List[string]]::new()
     $parts.Add("summary=$tag")
+    if ($project) { $parts.Add("project=$(Format-EventValue $project)") }
+    if ($root)    { $parts.Add("project_root=$(Format-EventValue $root)") }
     foreach ($p in $e.PSObject.Properties) {
         $v = $p.Value
         if ($v -is [System.Management.Automation.PSCustomObject]) {
@@ -386,21 +435,30 @@ function Map-Event($e) {
     return $null
 }
 
-function Process-Hook($e) {
+function Process-Hook($e, [string]$rootHeader) {
     $sid   = if ($e.session_id) { [string]$e.session_id } else { 'unknown' }
     $short = $sid.Substring(0, [Math]::Min(8, $sid.Length))
     $detail = @($e.notification_type, $e.error_type, $e.tool_name, $e.trigger, $e.compact_reason) | Where-Object { $_ } | Select-Object -First 1
     $tag = if ($detail) { "$($e.hook_event_name)/$detail" } else { [string]$e.hook_event_name }
 
+    # The project: the header (the session's root) wins; else what the
+    # session already had; else the cwd of this first event
+    $known = if ($script:sessions.ContainsKey($sid)) { $script:sessions[$sid] } else { $null }
+    $root = if ($rootHeader) { $rootHeader }
+            elseif ($known -and $known.root) { $known.root }
+            elseif ($e.cwd) { [string]$e.cwd }
+            else { $null }
+    $project = Get-ProjectName $root
+
     # Every event goes to the inspector, the ring and the JSON log, mapped or not
-    $eventLine = Format-EventLine $e $tag
+    $eventLine = Format-EventLine $e $tag $project $root
     Add-Event $tag $eventLine
     Send-Event $eventLine
     if ($LogEvents) { Write-EventLog $e }
 
     $cmd = Map-Event $e
     if (-not $cmd) {
-        Log "hook $tag session=$short : ignored"
+        Log "hook $tag session=$short project=$project : ignored"
         return
     }
     if ($e.hook_event_name -eq 'SessionEnd') {
@@ -414,9 +472,12 @@ function Process-Hook($e) {
         }
         $s.last = Get-Date
         if ($e.transcript_path) { $s.transcript = [string]$e.transcript_path }
-        if ($e.cwd) { $s.project = Split-Path -Leaf ([string]$e.cwd) }
+        if ($root -and ($rootHeader -or -not $s.root)) {
+            $s.root    = $root
+            $s.project = $project
+        }
     }
-    Log "hook $tag session=$short -> $cmd (sessions=$($script:sessions.Count))"
+    Log "hook $tag session=$short project=$project -> $cmd (sessions=$($script:sessions.Count))"
     Expire-Sessions
     Sync-Device
 }
@@ -445,7 +506,8 @@ function Handle-Request($ctx) {
     if ($path -eq '/hook') {
         try {
             $e = $body | ConvertFrom-Json
-            Process-Hook $e
+            $rootHeader = [string]$req.Headers['X-Claude-Project']
+            Process-Hook $e $rootHeader
             Send-Response $ctx 200 '{}'
         } catch {
             Log "hook: bad payload: $($_.Exception.Message)"
@@ -537,8 +599,9 @@ function Handle-Request($ctx) {
             codes            = (Get-SessionCodes)
             last_ping        = $(if ($script:lastPing -gt [datetime]::MinValue) { $script:lastPing.ToString('s') } else { $null })
             sessions         = @($script:sessions.GetEnumerator() | ForEach-Object {
-                [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s'); project = $_.Value.project }
+                [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s'); project = $_.Value.project; root = $_.Value.root }
             })
+            projects         = $ProjectsPath
             log              = $LogPath
         }
         Send-Response $ctx 200 ($obj | ConvertTo-Json -Depth 5)
@@ -560,6 +623,7 @@ try {
 }
 Log "daemon started: port=$PortName http=http://localhost:$HttpPort/ log=$LogPath"
 
+Update-ProjectNames
 Open-Serial | Out-Null
 $task = $listener.GetContextAsync()
 $lastHousekeeping = Get-Date
@@ -608,6 +672,7 @@ try {
         }
         if (($now - $lastHousekeeping).TotalSeconds -ge 60) {
             Expire-Sessions
+            Update-ProjectNames
             $lastHousekeeping = $now
         }
     }

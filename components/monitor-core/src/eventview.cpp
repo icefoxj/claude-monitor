@@ -114,10 +114,15 @@ void EventView::draw(const EventLog& log, const char* statusLine, int64_t nowMs)
         canvas_.setTextColor(kDim, kBg);
         canvas_.drawString("waiting for the first hook event...", kMargin, y);
     } else {
-        // ---- last event: name, sequence number, age ----
+        // ---- last event: name, sequence number, project, age ----
         canvas_.setFont(kFontTitle);
-        char title[96];
-        snprintf(title, sizeof(title), "#%lu  %s", static_cast<unsigned long>(last->seq), last->event.name.c_str());
+        char title[128];
+        const char* project = last->event.find("project");
+        if (project && project[0]){
+            snprintf(title, sizeof(title), "#%lu  %s  [%s]", static_cast<unsigned long>(last->seq), last->event.name.c_str(), project);
+        } else {
+            snprintf(title, sizeof(title), "#%lu  %s", static_cast<unsigned long>(last->seq), last->event.name.c_str());
+        }
         canvas_.setTextColor(kAccent, kBg);
         canvas_.drawString(title, kMargin, y);
         canvas_.setFont(kFontBody);
@@ -167,12 +172,19 @@ void EventView::draw(const EventLog& log, const char* statusLine, int64_t nowMs)
         char age[32];
         ageText(it->receivedMs, nowMs, age, sizeof(age));
         const char* summary = it->event.find("summary");
+        const char* project = it->event.find("project");
         const char* session = it->event.find("session_id");
         char line[200];
-        snprintf(line, sizeof(line), "#%-4lu %-10s %s  %.8s",
-                 static_cast<unsigned long>(it->seq), age,
-                 summary ? summary : it->event.name.c_str(),
-                 session ? session : "");
+        if (project && project[0]){
+            snprintf(line, sizeof(line), "#%-4lu %-10s %s  [%s]",
+                     static_cast<unsigned long>(it->seq), age,
+                     summary ? summary : it->event.name.c_str(), project);
+        } else {
+            snprintf(line, sizeof(line), "#%-4lu %-10s %s  %.8s",
+                     static_cast<unsigned long>(it->seq), age,
+                     summary ? summary : it->event.name.c_str(),
+                     session ? session : "");
+        }
         canvas_.setTextColor(rows == 0 ? kText : kHistory, kBg);
         std::string s(line);
         while (s.size() > 1 && canvas_.textWidth(s.c_str()) > W - 2 * kMargin){

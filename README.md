@@ -154,7 +154,7 @@ A Claude Code killed without a `SessionEnd` (terminal closed the hard way, machi
 
 The log at `%LOCALAPPDATA%\claude-monitor\daemon.log` has one line per event with a millisecond timestamp, which is how you find out where time goes when an icon seems late.
 
-Every hook event is also turned into one `event` line with all its fields (nested objects flattened one level, values cut at 160 characters) and sent to a device that declared `features=events`, the Tab5. The last 50 of those lines stay in memory, `GET /events?n=20` returns them newest first, which is a quick way to see what Claude Code delivers to the hooks without any device. Start the daemon with `-LogEvents` and it also appends each raw payload, untrimmed, as one JSON line to `%LOCALAPPDATA%\claude-monitor\hooks.jsonl` (`Install-MonitorDaemon.ps1 -LogEvents` registers it that way). Prompts and tool inputs land in that file, so treat it as you would a transcript.
+Every hook event is also turned into one `event` line with all its fields (nested objects flattened one level, values cut at 160 characters), preceded by the daemon's own `summary=`, `project=` and `project_root=`, and sent to a device that declared `features=events`, the Tab5, which shows the project name next to each event. The last 50 of those lines stay in memory, `GET /events?n=20` returns them newest first, which is a quick way to see what Claude Code delivers to the hooks without any device. Start the daemon with `-LogEvents` and it also appends each raw payload, untrimmed, as one JSON line to `%LOCALAPPDATA%\claude-monitor\hooks.jsonl` (`Install-MonitorDaemon.ps1 -LogEvents` registers it that way). Prompts and tool inputs land in that file, so treat it as you would a transcript.
 
 Endpoints, all on `http://localhost:47831/`:
 
@@ -173,26 +173,30 @@ Endpoints, all on `http://localhost:47831/`:
 
 ## Claude Code hooks
 
-Hooks live in `~/.claude/settings.json` (all sessions) or `.claude/settings.json` in a project. With the daemon, every event is the same one-line HTTP hook and the mapping lives in the daemon:
+Hooks live in `~/.claude/settings.json` (all sessions) or `.claude/settings.json` in a project. With the daemon, every event is the same HTTP hook and the mapping lives in the daemon. The hook also sends the project root in a header: the payload only carries `cwd`, which follows the shell around, while `${CLAUDE_PROJECT_DIR}` is the directory the session started in. Header values interpolate environment variables only when they are listed in `allowedEnvVars`.
 
 ```json
 {
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "PreToolUse":       [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "Notification":     [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "Stop":             [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "StopFailure":      [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "PreCompact":       [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "PostCompact":      [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "SubagentStart":    [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "SubagentStop":     [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }],
-    "SessionEnd":       [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2 }] }]
+    "SessionStart":     [{ "hooks": [{ "type": "http", "url": "http://localhost:47831/hook", "timeout": 2,
+                                       "headers": { "X-Claude-Project": "${CLAUDE_PROJECT_DIR}" },
+                                       "allowedEnvVars": ["CLAUDE_PROJECT_DIR"] }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "…same object…": "" }] }],
+    "PreToolUse":       [{ "matcher": "AskUserQuestion", "hooks": [{ "…": "" }] }],
+    "PostToolUse":      [{ "hooks": [{ "…": "" }] }],
+    "Notification":     [{ "hooks": [{ "…": "" }] }],
+    "Stop":             [{ "hooks": [{ "…": "" }] }],
+    "StopFailure":      [{ "hooks": [{ "…": "" }] }],
+    "PreCompact":       [{ "hooks": [{ "…": "" }] }],
+    "PostCompact":      [{ "hooks": [{ "…": "" }] }],
+    "SubagentStart":    [{ "hooks": [{ "…": "" }] }],
+    "SubagentStop":     [{ "hooks": [{ "…": "" }] }],
+    "SessionEnd":       [{ "hooks": [{ "…": "" }] }]
   }
 }
 ```
+
+The twelve entries are identical apart from the `PreToolUse` matcher. The daemon shows each session under the root's folder name (`claude-monitor`); to show something else, create `%LOCALAPPDATA%\claude-monitor\projects.json` mapping roots to names, `{ "E:\\work\\claude-monitor": "Monitor" }`. It is re-read within a minute of a change. Without the header (older configuration) the daemon falls back to the `cwd` of the first event it sees for the session.
 
 The mapping the daemon applies:
 
