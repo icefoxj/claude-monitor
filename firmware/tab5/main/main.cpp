@@ -52,6 +52,7 @@
 #include "monitor/icons.h"
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
+#include "monitor/screenshot.h"
 #include "monitor/tilt.h"
 #include "monitor/ui.h"
 #include "monitor/version.h"
@@ -91,6 +92,10 @@ constexpr int kAutoOffFrames = 30 * 60 * 30;   // 30 min
 
 // Names, clocks and the inspector refresh once a second
 constexpr int kTextRefreshFrames = 30;
+
+// One frame at the 30 fps every counter assumes; the loop measures how
+// many really went by (a 486 px gear takes longer than that to draw)
+constexpr int64_t kFrameUs = 33333;
 
 // ---------------- orientation calibration for this unit ----------------
 //
@@ -165,6 +170,20 @@ enum class View { Grid, Detail };
 void writeLine(const char* msg, int n){
     if (n > 0){
         usb_serial_jtag_write_bytes(msg, n, pdMS_TO_TICKS(50));
+    }
+}
+
+// For the screenshot dump: keeps pushing until the host has taken it all
+// (the USB driver only moves data while the host reads), gives up after
+// two seconds without progress. In pieces smaller than the driver's TX
+// ring buffer: a bigger item is refused whole, not queued in parts.
+void writeAll(const char* data, int n){
+    int done = 0;
+    int stalls = 0;
+    while (done < n && stalls < 40){
+        int piece = n - done < 1024 ? n - done : 1024;
+        int k = usb_serial_jtag_write_bytes(data + done, piece, pdMS_TO_TICKS(50));
+        if (k > 0){ done += k; stalls = 0; } else { ++stalls; }
     }
 }
 
@@ -513,16 +532,23 @@ extern "C" void app_main(void){
             }
         }
 
-        // The 33 ms timeout blocks waiting for data (no busy-wait) and sets
-        // the ~30 fps pace of the animations
+        // The read blocks for what is left of a 33 ms frame (no busy-wait),
+        // which paces the animations at ~30 fps while drawing is quick; when
+        // it is not (a 486 px gear, a screenshot dump) the timers below are
+        // advanced by the number of frames that really went by
+        static int64_t lastTickUs = esp_timer_get_time();
+        int64_t left = kFrameUs - (esp_timer_get_time() - lastTickUs);
+        int waitMs = left > 1000 ? static_cast<int>(left / 1000 > 33 ? 33 : left / 1000) : 1;
         bool woke = false;
-        int bytesRead = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(33));
+        int bytesRead = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(waitMs));
         for (int i = 0; i < bytesRead; i++){
             if (!parser.feed(static_cast<char>(buf[i]), line)){
                 continue;
             }
             auto cmd = monitor::parseCommand(line);
-            if (cmd.kind != monitor::Command::Status && cmd.kind != monitor::Command::Version){
+            const bool query = cmd.kind == monitor::Command::Status || cmd.kind == monitor::Command::Version
+                            || cmd.kind == monitor::Command::Screenshot || cmd.kind == monitor::Command::View;
+            if (!query){   // a query is not a sign of life from the state feed
                 for (auto& s : slots) s.ui.noteCommand();
                 placeholder.ui.noteCommand();
             }
@@ -588,7 +614,28 @@ extern "C" void app_main(void){
                 case monitor::Command::SubagentStop:  placeholder.ui.subagentStop(); break;
                 case monitor::Command::ToolStart:     placeholder.ui.toolStart(); break;
                 case monitor::Command::ToolStop:      placeholder.ui.toolStop(); break;
-                case monitor::Command::Sessions:      break;   // the aggregate codes: the tiles say it
+                case monitor::Command::Sessions:      placeholder.ui.setSessions(cmd.arg); break;   // dots on the placeholder only: the tiles say it otherwise
+                case monitor::Command::View: {
+                    // "view grid" or "view detail <id>": what a tap does, from the host
+                    // (documentation captures, debugging); "view detail" alone opens the
+                    // only tile there is
+                    if (cmd.arg.rfind("detail", 0) == 0){
+                        std::string id = cmd.arg.size() > 7 ? cmd.arg.substr(7) : "";
+                        Slot* s = id.empty() ? nullptr : findSlot(id);
+                        if (!s && visibleSlots().size() == 1) s = visibleSlots()[0];
+                        if (s){ detail = s; view = View::Detail; relayout = true; }
+                    } else {
+                        detail = nullptr; view = View::Grid; relayout = true;
+                    }
+                    break;
+                }
+                case monitor::Command::Screenshot:
+                    // Bring the frame up to date first, then dump it row by row
+                    if (relayout){ applyLayout(); relayout = false; }
+                    drawTexts();
+                    drawInspector();
+                    monitor::dumpDisplay(M5.Display, writeAll);
+                    break;
                 case monitor::Command::Ping:
                     for (auto& s : slots) s.ui.ping();
                     placeholder.ui.ping();
@@ -687,18 +734,24 @@ extern "C" void app_main(void){
         }
         const bool displayOn = !autoOff;
 
-        for (auto& s : slots) s.ui.tick(displayOn && s.ui.visible());
-        placeholder.ui.tick(displayOn && placeholder.ui.visible());
-        tickBeep();
-
-        ++frame;
-        if (displayOn && (textDirty || frame % kTextRefreshFrames == 0)){
+        // Frames elapsed since the last tick, in real time; 0 when data made
+        // the read return early, and then there is nothing to advance yet
+        int frames = static_cast<int>((esp_timer_get_time() - lastTickUs + kFrameUs / 2) / kFrameUs);
+        if (frames > 0){
+            lastTickUs += static_cast<int64_t>(frames) * kFrameUs;
+            for (auto& s : slots) s.ui.tick(displayOn && s.ui.visible(), frames);
+            placeholder.ui.tick(displayOn && placeholder.ui.visible(), frames);
+            tickBeep();
+            frame += frames;   // since the last text refresh
+        }
+        if (displayOn && (textDirty || frame >= kTextRefreshFrames)){
             drawTexts();
             textDirty = false;
         }
-        if (displayOn && view == View::Detail && (viewDirty || frame % kTextRefreshFrames == 0)){
+        if (displayOn && view == View::Detail && (viewDirty || frame >= kTextRefreshFrames)){
             drawInspector();
             viewDirty = false;
         }
+        if (frame >= kTextRefreshFrames) frame = 0;
     }
 }

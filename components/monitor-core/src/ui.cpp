@@ -212,12 +212,14 @@ void Ui::feedAccel(float ax, float ay, float az){
     }
 }
 
-void Ui::tick(bool screenOn){
+void Ui::tick(bool screenOn, int frames){
+    if (frames < 1) frames = 1;
+
     // Timers run whether or not the screen is on
-    ++stateFrames_;
-    ++linkFrames_;
+    stateFrames_ += frames;
+    linkFrames_  += frames;
     if (state_ == State::Processing || state_ == State::Compacting){
-        ++workFrames_;
+        workFrames_ += frames;
     }
 
     // Link mark appearing or disappearing on a static icon (the animated
@@ -230,21 +232,23 @@ void Ui::tick(bool screenOn){
         }
     }
 
-    // The animated states redraw every frame
+    // The animated states redraw every call, advanced by the frames that
+    // went by, so a slow frame does not slow the spin or the hourglass
     if (isAnimated(state_) && screenOn){
-        gearAngle_ += kGearStep;
-        if (gearAngle_ >= 2.0f * kPi){
+        gearAngle_ += kGearStep * frames;
+        while (gearAngle_ >= 2.0f * kPi){
             gearAngle_ -= 2.0f * kPi;
         }
-        ++animFrame_;
+        animFrame_ += frames;
         render();
     }
 
     // Entry pulse: the last frame lands exactly on scale 1
     if (pulseLeft_ > 0){
         if (screenOn){
-            int k = attention_.frames - pulseLeft_ + 1;   // 1..frames
-            --pulseLeft_;
+            pulseLeft_ -= frames;
+            if (pulseLeft_ < 0) pulseLeft_ = 0;
+            int k = attention_.frames - pulseLeft_;   // 1..frames: the step just reached
             float scale = (pulseLeft_ == 0)
                 ? 1.0f
                 : 1.0f + attention_.amp * fabsf(sinf(kPi * k / attention_.period));

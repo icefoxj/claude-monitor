@@ -129,6 +129,15 @@ ParsedCommand parseCommand(std::string_view line){
         cmd.kind = Command::SessionClear;
         return cmd;
     }
+    if (word == "screenshot"){
+        cmd.kind = Command::Screenshot;
+        return cmd;
+    }
+    if (word == "view"){
+        cmd.kind = Command::View;
+        cmd.arg = std::string(arg);
+        return cmd;
+    }
     State s;
     if (parseState(word, s)){
         cmd.kind = Command::SetState;

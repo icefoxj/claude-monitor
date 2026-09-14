@@ -14,6 +14,7 @@
 #include <M5Unified.h>
 
 #include <driver/usb_serial_jtag.h>
+#include <esp_timer.h>
 #include <esp_app_desc.h>
 #include <esp_err.h>
 #include <esp_log.h>
@@ -193,15 +194,23 @@ extern "C" void app_main(void){
             ui.feedAccel(ax, ay, az);
         }
 
-        // The 33 ms timeout blocks waiting for data (no busy-wait) and sets
-        // the ~30 fps pace of the animations and the tilt filter
-        int bytesRead = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(33));
+        // The read blocks for what is left of a 33 ms frame (no busy-wait):
+        // the ~30 fps pace of the animations and the tilt filter. The timers
+        // are then advanced by the frames that really went by, so a slow
+        // frame does not slow the clocks
+        constexpr int64_t kFrameUs = 33333;
+        static int64_t lastTickUs = esp_timer_get_time();
+        int64_t left = kFrameUs - (esp_timer_get_time() - lastTickUs);
+        int waitMs = left > 1000 ? static_cast<int>(left / 1000 > 33 ? 33 : left / 1000) : 1;
+        int bytesRead = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(waitMs));
         for (int i = 0; i < bytesRead; i++){
             if (!parser.feed(static_cast<char>(buf[i]), line)){
                 continue;
             }
             auto cmd = monitor::parseCommand(line);
-            if (cmd.kind != monitor::Command::Status && cmd.kind != monitor::Command::Version){
+            const bool query = cmd.kind == monitor::Command::Status || cmd.kind == monitor::Command::Version
+                            || cmd.kind == monitor::Command::Screenshot || cmd.kind == monitor::Command::View;
+            if (!query){
                 ui.noteCommand();   // a query is not a sign of life from the state feed
             }
             switch (cmd.kind){
@@ -245,6 +254,13 @@ extern "C" void app_main(void){
                 case monitor::Command::Session:      break;   // per-session lines: same, the cube shows the aggregate
                 case monitor::Command::SessionEnd:   break;
                 case monitor::Command::SessionClear: break;
+                case monitor::Command::View:         break;   // no pages on the cube
+                case monitor::Command::Screenshot: {
+                    // The SPI panel's memory cannot be read back reliably; the Tab5 answers this
+                    static const char kNo[] = "ERROR screenshot: not supported on this board\n";
+                    usb_serial_jtag_write_bytes(kNo, sizeof(kNo) - 1, pdMS_TO_TICKS(50));
+                    break;
+                }
                 case monitor::Command::Unknown:      break;
             }
         }
@@ -273,6 +289,10 @@ extern "C" void app_main(void){
             M5.Display.setBrightness(brightness);
         }
 
-        ui.tick(displayOn);
+        int frames = static_cast<int>((esp_timer_get_time() - lastTickUs + kFrameUs / 2) / kFrameUs);
+        if (frames > 0){
+            lastTickUs += static_cast<int64_t>(frames) * kFrameUs;
+            ui.tick(displayOn, frames);
+        }
     }
 }

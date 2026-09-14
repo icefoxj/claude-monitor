@@ -72,7 +72,10 @@ public:
     // Per-frame work: timers, gear spin, pulse step, link watchdog. With the
     // screen dark nothing is drawn and a pending pulse is dropped; the
     // timers still run.
-    void tick(bool screenOn);
+    // `frames` is how many 33 ms frames went by since the last call: the
+    // board measures it, so the timers follow real time when a frame took
+    // longer than that (a big animated canvas, a screenshot dump)
+    void tick(bool screenOn, int frames = 1);
 
     State state() const { return state_; }
     int subagents() const { return subagents_; }

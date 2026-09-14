@@ -124,7 +124,11 @@ void testParseCommand(){
     CHECK(parseCommand("version").arg == "");
     CHECK(parseCommand("tool_start").kind == Command::ToolStart);
     CHECK(parseCommand("tool_stop").kind == Command::ToolStop);
-    CHECK(kProtocolVersion == 5);
+    CHECK(parseCommand("screenshot").kind == Command::Screenshot);
+    CHECK(parseCommand("view grid").kind == Command::View);
+    CHECK(parseCommand("view grid").arg == "grid");
+    CHECK(parseCommand("view detail 33db5bf1-e7eb").arg == "detail 33db5bf1-e7eb");
+    CHECK(kProtocolVersion == 6);
 
     ParsedCommand se = parseCommand("session 33db5bf1-e7eb\tlabel=claude-monitor\tstate=waiting_user\tsubagents=0\ttool=1");
     CHECK(se.kind == Command::Session);

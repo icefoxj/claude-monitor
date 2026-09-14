@@ -46,13 +46,20 @@
 //                     sent whenever something in it changes
 //   "session_end <id>" -> that session is gone
 //   "session_clear"    -> forget every session (the host re-sends them)
+//   "view grid" / "view detail <id>" -> what a tap does on a board with pages
+//                     (the Tab5): the tile grid, or one session's detail page
+//   "screenshot"     -> the board dumps its display as text: "SCREENSHOT w= h=
+//                     fmt=rgb888", one "ROW <y> <base64>" per row, "END"
+//                     (tools/Get-Screenshot.ps1 turns it into a PNG); a board
+//                     that cannot read its panel back answers ERROR
 
 namespace monitor {
 
 // Bumped when words are added: 1 = the 1.0/1.1 set (states, subagents,
 // status); 2 = sessions, ping, calibrate, version; 3 = event;
-// 4 = tool_start/stop; 5 = session, session_end, session_clear
-constexpr int kProtocolVersion = 5;
+// 4 = tool_start/stop; 5 = session, session_end, session_clear;
+// 6 = screenshot, view
+constexpr int kProtocolVersion = 6;
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
@@ -76,12 +83,12 @@ bool isAnimated(State s);
 
 enum class Command { Unknown, SetState, SubagentStart, SubagentStop, ToolStart, ToolStop,
                      Status, Version, Ping, Sessions, Calibrate, Event,
-                     Session, SessionEnd, SessionClear };
+                     Session, SessionEnd, SessionClear, Screenshot, View };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;
     State state = State::Off;   // meaningful when kind == SetState
-    std::string arg;            // the rest of the line for Sessions, Calibrate, Event, Session, SessionEnd
+    std::string arg;            // the rest of the line for Sessions, Calibrate, Event, Session, SessionEnd, View
 };
 
 // One field of a hook event, as the host sent it
