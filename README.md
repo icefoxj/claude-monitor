@@ -213,7 +213,10 @@ The script uses .NET's `SerialPort`, pins DTR/RTS low so the board never resets,
 
 ```
 VERSION board=atoms3r model=M5Stack-AtomS3R chip=esp32s3 rev=v0.2 cores=2 flash=8MB fw=v1.2.0 idf=v5.5 m5unified=0.2.21 protocol=6 features=- project=claude-monitor-atoms3r built=2026-09-10T20:15:42 sha=a66e423b uptime=418 reset=poweron
+VERSION board=tab5 model=M5Stack-Tab5 chip=esp32p4 rev=v1.3 cores=2 flash=16MB fw=v1.3.0 idf=v5.5 m5unified=0.2.21 protocol=6 features=events,touch,rotate,sessions project=claude-monitor-tab5 built=2026-09-26T16:51:58 sha=c3b2d5ba uptime=20 reset=usb
 ```
+
+The second line is the Tab5 right after flashing the 1.3.0 release; `features=` is what tells the daemon it wants the per-session and event lines.
 
 `board` is what the firmware was built for and `model` what M5Unified detected at boot, so the two disagree when an image runs on the wrong module. `fw` is the git tag the build came from (`-N-gHASH` after it means N commits past the tag, `-dirty` an uncommitted tree). The device also sends this line once, unasked, when it boots, so the daemon log records every reboot with its version.
 
