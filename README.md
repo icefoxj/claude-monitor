@@ -4,8 +4,10 @@ A desk status light for [Claude Code](https://claude.com/claude-code), on M5Stac
 
 Two devices are supported by the same firmware component and the same daemon:
 
-- the **M5Stack AtomS3R**, a 24 mm cube with a 128×128 display: one icon, the most urgent state among your sessions, kept upright by the accelerometer as you turn it;
-- the **M5Stack Tab5**, a 5" tablet: one tile per Claude Code session (up to six), each with the project's name, its icon and a clock, and a tap on a tile opens a page with every field of the last hook event for that session. It turns with gravity like a tablet and beeps when a red icon appears.
+- the **M5Stack AtomS3R** (ESP32-S3), a 24 mm cube with a 128×128 display: one icon, the most urgent state among your sessions, kept upright by the accelerometer as you turn it;
+- the **M5Stack Tab5** (ESP32-P4), a 5" 1280×720 touch tablet: one tile per Claude Code session (up to six), each with the project's name, its icon and a clock, and a tap on a tile opens a page with every field of the last hook event for that session. It turns with gravity like a tablet and beeps when a red icon appears.
+
+Both have prebuilt firmware in every [release](https://github.com/icefoxj/claude-monitor/releases) (the Tab5 since 1.3.0), and the cube can be flashed from the browser.
 
 Native **ESP-IDF 5.5** (C++ / CMake / FreeRTOS). No Arduino, no PlatformIO, no Wi-Fi, no soldering. The host side is three PowerShell 7 scripts. Everything the pictures below show was captured from the Tab5 itself (`tools/Make-ReadmeImages.ps1`); the AtomS3R draws the same icons at 128 px.
 
@@ -79,7 +81,7 @@ On Windows, with the daemon (the recommended way). What you need: one of the boa
 **1. Put the firmware on the board.** Three ways, pick one:
 
 - The **[web flasher](https://icefoxj.github.io/claude-monitor/)** (Chrome or Edge; Firefox and Safari have no Web Serial): plug the AtomS3R in, open the page, click, pick the port. Nothing to install. (The page carries the AtomS3R image; the Tab5 uses the next option.)
-- **`esptool`** with the files of a [release](https://github.com/icefoxj/claude-monitor/releases) (`pip install esptool`; each release carries four files per board, the three parts and a merged image). Replace the port and the version:
+- **`esptool`** with the files of a [release](https://github.com/icefoxj/claude-monitor/releases) (`pip install esptool`; each release carries four files per board, the three parts and a merged image; the Tab5's since 1.3.0). Replace the port and the version (`v1.3.0`, for example). Note the Tab5's bootloader goes to `0x2000`, not `0x0`: that is where the ESP32-P4 looks for it.
 
   ```
   python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 claude-monitor-atoms3r-vX.Y.Z-bootloader.bin 0x8000 claude-monitor-atoms3r-vX.Y.Z-partition-table.bin 0x10000 claude-monitor-atoms3r-vX.Y.Z.bin
@@ -89,7 +91,7 @@ On Windows, with the daemon (the recommended way). What you need: one of the boa
   The three parts leave the NVS partition alone, so a [calibration stored on the device](#calibrating-auto-rotation) survives an update; the merged image (`…-merged.bin` at `0x0`) wipes it, which is also how you get a blank device.
 - **Build from source** with ESP-IDF, see [Build and flash](#build-and-flash).
 
-On a board that has never been flashed, hold the side reset button about two seconds first to enter download mode. The AtomS3R shows a green check as soon as the firmware boots.
+On an AtomS3R that has never been flashed, hold the side reset button about two seconds first to enter download mode; the Tab5 tested here needed no button, esptool reset it into download mode over USB. The AtomS3R shows a green check as soon as the firmware boots, the Tab5 a single tile with the same check until the first session arrives.
 
 **2. Find the port.** Device Manager lists the board as "USB Serial Device (COMx)"; in PowerShell:
 
@@ -161,7 +163,7 @@ The ESP-IDF project for the AtomS3R lives in `firmware/atoms3r/`, the Tab5's in 
 1. **ESP-IDF: Set Espressif Device Target** → `esp32s3` (AtomS3R) or `esp32p4` (Tab5)
 2. Nothing to configure: `sdkconfig.defaults` already sets the target, the flash size and, for the Tab5, the PSRAM at 200 MHz that its panel needs. If you do open **ESP-IDF: SDK Configuration Editor**, leave *Channel for console output* at its default (UART0 with USB Serial/JTAG as a secondary channel, which is what makes the boot log visible over USB).
 3. **ESP-IDF: Build your Project**
-4. Connect the board. For the **first flash**, hold the side reset button ~2 s to enter download mode. **ESP-IDF: Select Port to Use** → pick the new port.
+4. Connect the board. For the AtomS3R's **first flash**, hold the side reset button ~2 s to enter download mode (the Tab5 needs nothing). **ESP-IDF: Select Port to Use** → pick the new port.
 5. **ESP-IDF: Flash your Project**
 6. **ESP-IDF: Monitor Device** — the boot log, and a green check on the screen. **Close the monitor** before the next step; it holds the port open.
 
@@ -414,7 +416,8 @@ Firmware, scripts and the article are released under the [Creative Commons Attri
 ## References
 
 - [ESP-IDF VS Code extension](https://docs.espressif.com/projects/vscode-esp-idf-extension/en/latest/)
-- [AtomS3R docs](https://docs.m5stack.com/en/core/AtomS3R) · [store page](https://shop.m5stack.com/products/atoms3r-dev-kit) · [Tab5 store page](https://shop.m5stack.com/products/m5stack-tab5-iot-development-kit-esp32-p4)
+- [AtomS3R docs](https://docs.m5stack.com/en/core/AtomS3R) · [store page](https://shop.m5stack.com/products/atoms3r-dev-kit)
+- [Tab5 docs](https://docs.m5stack.com/en/core/Tab5) · [store page](https://shop.m5stack.com/products/m5stack-tab5-iot-development-kit-esp32-p4) · [ESP32-P4 in ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/v5.5/esp32p4/)
 - [M5Unified](https://github.com/m5stack/M5Unified) on the [Component Registry](https://components.espressif.com/components/m5stack/m5unified)
 - [Claude Code hooks](https://code.claude.com/docs/en/hooks)
 - The original write-up, [claude-code-status-monitor-atoms3r.md](claude-code-status-monitor-atoms3r.md): design decisions and the geometry of the icons (the firmware has evolved past it, see [CHANGELOG.md](CHANGELOG.md))

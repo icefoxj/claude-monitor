@@ -10,6 +10,7 @@
   h1 { font-size: 1.6rem; margin-bottom: .25rem; }
   .sub { opacity: .7; margin-top: 0; }
   code { font-family: ui-monospace, Consolas, monospace; font-size: .95em; }
+  pre { overflow-x: auto; padding: .75rem; border-radius: .35rem; background: rgba(127,127,127,.12); white-space: pre-wrap; word-break: break-all; }
   .box { border: 1px solid rgba(127,127,127,.4); border-radius: .5rem; padding: 1rem 1.25rem; margin: 1.25rem 0; }
   ol li { margin: .35rem 0; }
   esp-web-install-button { display: inline-block; margin: .5rem 0; }
@@ -19,7 +20,7 @@
 </head>
 <body>
 <h1>claude-monitor</h1>
-<p class="sub">A desk status light for Claude Code on the M5Stack AtomS3R. Firmware <strong>__VERSION__</strong>.</p>
+<p class="sub">A desk status light for Claude Code on the M5Stack AtomS3R (ESP32-S3) and Tab5 (ESP32-P4). Firmware <strong>__VERSION__</strong>.</p>
 
 <div class="box">
   <p>Plug the AtomS3R into a USB-C cable and click the button. Works in Chrome and Edge (Web Serial); Firefox and Safari cannot talk to serial ports.</p>
@@ -35,6 +36,12 @@
   <li>When the browser asks, pick the port named <em>USB Serial Device</em> or <em>USB JTAG/serial debug unit</em>.</li>
   <li>After the reset the screen shows a green check. Next: set up the daemon and the Claude Code hooks, see the <a href="https://github.com/icefoxj/claude-monitor#the-host-daemon">README</a>.</li>
 </ol>
+
+<div class="box">
+  <p><strong>Tab5 (ESP32-P4)?</strong> This page flashes the AtomS3R only. The Tab5's images are attached to the same <a href="https://github.com/icefoxj/claude-monitor/releases">release</a>; write the three parts with <code>esptool</code> (<code>pip install esptool</code>), with the bootloader at <code>0x2000</code> as the ESP32-P4 expects, then set up the daemon as for the cube:</p>
+  <pre><code>python -m esptool --chip esp32p4 -p COM7 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m 0x2000 claude-monitor-tab5-__VERSION__-bootloader.bin 0x8000 claude-monitor-tab5-__VERSION__-partition-table.bin 0x10000 claude-monitor-tab5-__VERSION__.bin</code></pre>
+  <p>Replace <code>COM7</code> with the tablet's port (<code>/dev/ttyACM0</code> on Linux, <code>/dev/cu.usbmodemXXXX</code> on macOS). No button needed: esptool resets it into download mode over USB.</p>
+</div>
 
 <p>The files written here are the bootloader, partition table and app attached to the <a href="https://github.com/icefoxj/claude-monitor/releases">GitHub release</a>, each at its own offset, so a calibration stored on the device survives an update. Tick <em>Erase device</em> in the dialog to start from a blank flash instead. Sources, protocol and hook mapping: <a href="https://github.com/icefoxj/claude-monitor">github.com/icefoxj/claude-monitor</a>.</p>
 
