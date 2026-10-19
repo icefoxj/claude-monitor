@@ -17,19 +17,37 @@ param(
 
 $taskName = "claude-monitor daemon"
 
-if ($Uninstall) {
+# Stops the task and waits for the daemon to be gone. The daemon leaves on its
+# own when its launcher conhost ends; one started by an older registration
+# (pwsh straight from the task) or by hand is stopped by its command line
+function Stop-Daemon {
     Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    $find = { Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" | Where-Object { $_.CommandLine -match 'Monitor-Daemon\.ps1' } }
+    for ($i = 0; $i -lt 20 -and (& $find); $i++) { Start-Sleep -Milliseconds 250 }
+    & $find | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+if ($Uninstall) {
+    Stop-Daemon
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     Write-Host "Removed scheduled task '$taskName'."
     exit 0
 }
 
-$script = Join-Path $PSScriptRoot "Monitor-Daemon.ps1"
-$pwsh   = (Get-Command pwsh).Source
+$script  = Join-Path $PSScriptRoot "Monitor-Daemon.ps1"
+$pwsh    = (Get-Command pwsh).Source
+$conhost = Join-Path $env:SystemRoot "System32\conhost.exe"
 
 $argument = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`" -PortName $PortName -HttpPort $HttpPort"
 if ($LogEvents) { $argument += " -LogEvents" }
-$action    = New-ScheduledTaskAction -Execute $pwsh -Argument $argument
+# Through a headless conhost: with Windows Terminal as the default terminal
+# the console is handed to a Terminal window that -WindowStyle Hidden does
+# not hide, and closing that window kills the daemon (exit 0xC000013A)
+if (Test-Path $conhost) {
+    $action = New-ScheduledTaskAction -Execute $conhost -Argument "--headless `"$pwsh`" $argument"
+} else {
+    $action = New-ScheduledTaskAction -Execute $pwsh -Argument $argument
+}
 $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) `
                  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
@@ -37,8 +55,7 @@ $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interac
 
 # A running instance keeps the old arguments and blocks the new start
 # (MultipleInstances = IgnoreNew): stop it first
-Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 800
+Stop-Daemon
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 Write-Host "Registered and started '$taskName' (port $PortName, http://localhost:$HttpPort/)."

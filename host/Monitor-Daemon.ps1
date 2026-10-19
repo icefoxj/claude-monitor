@@ -909,6 +909,15 @@ try {
 }
 Log "daemon started: port=$PortName http=http://localhost:$HttpPort/ log=$LogPath"
 
+# Started by the scheduled task as `conhost --headless pwsh ...`: stopping the
+# task ends that conhost only, so follow it out instead of running on as an
+# orphan that keeps the port
+$script:launcher = $null
+try {
+    $parent = (Get-Process -Id $PID).Parent
+    if ($parent -and $parent.ProcessName -eq 'conhost') { $script:launcher = $parent }
+} catch {}
+
 Update-ProjectNames
 Initialize-ProcessSnapshots
 Open-Serial | Out-Null
@@ -928,6 +937,11 @@ try {
                 Log "http: handler error: $($_.Exception.Message)"
                 Send-Response $ctx 500 '{"error":"internal"}'
             }
+        }
+
+        if ($script:launcher -and $script:launcher.HasExited) {
+            Log "launcher conhost (pid $($script:launcher.Id)) has exited: stopping"
+            break
         }
 
         $now = Get-Date

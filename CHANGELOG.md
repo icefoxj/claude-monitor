@@ -2,6 +2,12 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
+## Unreleased
+
+### Fixed
+
+- The daemon's scheduled task starts `pwsh` through `conhost.exe --headless`. With Windows Terminal as the default terminal (the Windows 11 default), `-WindowStyle Hidden` did not hide anything: each logon left a Terminal window titled `pwsh.exe` on screen, and closing it killed the daemon (task result `0xC000013A`), after which the hooks went nowhere until the next logon. Since stopping the task now ends only that conhost, the daemon leaves on its own when its launcher is gone, and the installer waits for it (stopping an older instance by its command line) before registering again. Re-run `Install-MonitorDaemon.ps1` to pick this up.
+
 ## 1.3.0 — 2026-09-26
 
 Second board: the **M5Stack Tab5** (ESP32-P4), with a tile per Claude Code session. On the host, the daemon now sees permission approvals as they happen.
