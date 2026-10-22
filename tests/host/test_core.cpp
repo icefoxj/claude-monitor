@@ -6,6 +6,7 @@
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
 #include "monitor/tilt.h"
+#include "monitor/usage.h"
 
 #include <cmath>
 #include <cstdio>
@@ -128,7 +129,10 @@ void testParseCommand(){
     CHECK(parseCommand("view grid").kind == Command::View);
     CHECK(parseCommand("view grid").arg == "grid");
     CHECK(parseCommand("view detail 33db5bf1-e7eb").arg == "detail 33db5bf1-e7eb");
-    CHECK(kProtocolVersion == 6);
+    CHECK(parseCommand("view saver").arg == "saver");
+    CHECK(parseCommand("usage none").kind == Command::Usage);
+    CHECK(parseCommand("usage account\tage=12").arg == "account\tage=12");
+    CHECK(kProtocolVersion == 7);
 
     ParsedCommand se = parseCommand("session 33db5bf1-e7eb\tlabel=claude-monitor\tstate=waiting_user\tsubagents=0\ttool=1");
     CHECK(se.kind == Command::Session);
@@ -366,6 +370,45 @@ void testOrientation(){
     CHECK(o2.rotation() == 1);
 }
 
+void testUsage(){
+    Usage u;
+    CHECK(parseUsage("account\tage=42\tlimit=Current session|25|2580|normal"
+                     "\tlimit=This week|4.5|471600|\tlimit=This week (Fable)|0|471600|normal", u));
+    CHECK(u.source == "account");
+    CHECK(u.ageSec == 42);
+    CHECK(u.limits.size() == 3);
+    CHECK(u.limits[0].label == "Current session");
+    CHECK(near(u.limits[0].percent, 25.0f));
+    CHECK(u.limits[0].resetsIn == 2580);
+    CHECK(u.limits[0].severity == "normal");
+    CHECK(near(u.limits[1].percent, 4.5f));
+    CHECK(u.limits[1].severity.empty());
+    CHECK(u.limits[2].label == "This week (Fable)");
+
+    // Optional reset and severity; a bad limit is skipped, not the line
+    CHECK(parseUsage("statusline\tlimit=Week|101\tlimit=broken\tlimit=|5|1\tlimit=X|abc|1\tlimit=Y|7|-1|warning", u));
+    CHECK(u.limits.size() == 2);
+    CHECK(near(u.limits[0].percent, 101.0f) && u.limits[0].resetsIn == -1);
+    CHECK(u.limits[1].label == "Y" && u.limits[1].resetsIn == -1 && u.limits[1].severity == "warning");
+
+    // No data yet: a source and nothing else
+    CHECK(parseUsage("none", u));
+    CHECK(u.source == "none" && u.limits.empty() && u.ageSec == 0);
+
+    // The week by app: label before the last ':', bad items skipped
+    CHECK(parseUsage("account\tlimit=Week|4\tsplit=Chats:75|Cowork:15|Claude Code:10|bad|:3|X:y", u));
+    CHECK(u.split.size() == 3);
+    CHECK(u.split[0].label == "Chats" && near(u.split[0].percent, 75.0f));
+    CHECK(u.split[2].label == "Claude Code" && near(u.split[2].percent, 10.0f));
+    CHECK(parseUsage("account\tlimit=Week|4", u) && u.split.empty());
+    CHECK(parseUsage("account\tsplit=a:1|b:2|c:3|d:4|e:5|f:6", u) && u.split.size() == Usage::kMaxShares);
+
+    // At most kMaxLimits are kept; no source is an error
+    CHECK(parseUsage("account\tlimit=a|1\tlimit=b|2\tlimit=c|3\tlimit=d|4\tlimit=e|5", u));
+    CHECK(u.limits.size() == Usage::kMaxLimits);
+    CHECK(!parseUsage("", u));
+}
+
 }  // namespace
 
 int main(){
@@ -377,6 +420,7 @@ int main(){
     testWrapAngle();
     testTilt();
     testOrientation();
+    testUsage();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

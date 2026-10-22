@@ -2,10 +2,23 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
-## Unreleased
+## 1.4.0 — 2026-10-22
+
+The Tab5 keeps your Claude plan's usage on screen, as a tile next to the sessions or as a drifting screensaver when nothing happens, and shows what the Claude desktop app notifies (Cowork, scheduled tasks) as one more session.
+
+### Added
+
+- **Usage screensaver on the Tab5**: after ten minutes with every tile idle (or no session), a card with the Claude plan's usage, what `/usage` shows (the five-hour session, the week, per-model weekly limits: percentage, a green/amber/red bar, time left until the reset, age of the numbers), drifts slowly over the whole panel at a lower brightness and bounces off its edges, so nothing stays put on the screen. A tap, a state change or a new session brings the tiles back. It replaces the Tab5's switch-off after thirty idle minutes; the switch-off after thirty minutes without a host stays, and the cube is unchanged. `view saver` starts it at once; `STATUS` reports `screen=saver` and `usage=`.
+- **Usage tile on the Tab5**: while the tiles are up, the plan usage takes the last cell of the grid, next to the sessions (the name band reads "Claude usage", the clock band the age of the numbers), so it is always on screen. Seven cells (six sessions and the usage) make a 4×2 grid, 2×4 standing. The rows take the largest of four sizes that fits the cell; the screensaver's card uses the same drawing (`monitor-core`: `usageview.h`, `drawUsageRows`).
+- **The week by app**: the usage tile and the screensaver end with a row showing how the week's usage divides between Claude Code, chats and Cowork (a bar in one colour per app and a legend), from the account poll's breakdown, sent as `split=` in the `usage` line.
+- **Claude Desktop**: its Code tab already fired the same hooks; with `-DesktopNotifications` the daemon also reads the desktop app's Windows notifications (the Action Center's `wpndatabase.db`, read-only, through the system's `winsqlite3.dll`, every three seconds) and shows them as a session called "Claude Desktop": the red sign and the Tab5's beep for one that needs you ("Scheduled task needs your approval"), the green check for the others, the notification's text in the tile's inspector. The red sign goes when the notification leaves the Action Center, when the Claude window has been in front for three seconds, or after `-DesktopWaitMinutes` (30); the tile goes `-DesktopLingerMinutes` (10) later. The installer passes the switch on. Chats have no live signal; the week by app shows their share.
+- Protocol 7: `usage <source>\tage=<s>\tlimit=<label>|<percent>|<seconds to reset>|<severity>...\tsplit=<app>:<percent>|...`, sent only to a board that lists `usage` in `features=` (`monitor-core`: `usage.h` with `parseUsage`, host-tested; `screensaver.h` with `UsageSaver`).
+- Daemon: `POST /statusline` takes Claude Code's status line input (its `rate_limits` carry the session and the week for Pro and Max plans) and answers with a status line (model, context, `5h 27% (resets 14:00)`, `7d 4%`); `-AccountUsage` also polls, every five minutes and without blocking the loop, the endpoint Claude Code's `/usage` reads, with the access token from `~/.claude/.credentials.json` (undocumented; the token goes only to api.anthropic.com and is never logged). `GET /usage` shows the numbers, their source and the last poll's outcome. The installer passes `-AccountUsage` on. The VS Code extension does not run status lines, which is why the second source exists.
+- README: the screensaver and Claude Desktop sections, the screensaver's picture, and a dashboard picture with five sessions and the usage tile (`tools/Make-ReadmeImages.ps1` captures both with made-up numbers).
 
 ### Fixed
 
+- Tab5: the main task's stack is 16 KB (`CONFIG_ESP_MAIN_TASK_STACK_SIZE`). The 3.5 KB default had no room left: with the screensaver added, laying the tiles out again overflowed it ("Stack protection fault") and the board rebooted.
 - The daemon's scheduled task starts `pwsh` through `conhost.exe --headless`. With Windows Terminal as the default terminal (the Windows 11 default), `-WindowStyle Hidden` did not hide anything: each logon left a Terminal window titled `pwsh.exe` on screen, and closing it killed the daemon (task result `0xC000013A`), after which the hooks went nowhere until the next logon. Since stopping the task now ends only that conhost, the daemon leaves on its own when its launcher is gone, and the installer waits for it (stopping an older instance by its command line) before registering again. Re-run `Install-MonitorDaemon.ps1` to pick this up.
 
 ## 1.3.0 — 2026-09-26

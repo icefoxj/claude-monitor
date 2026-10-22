@@ -46,7 +46,7 @@ function Shot([string]$name, [string[]]$setup, [double]$wait, [int[]]$crop, [int
 }
 
 # ---- the icons, one at a time on the placeholder tile ----
-$clean = @('session_clear', 'view grid', 'sessions', 'subagent_stop', 'tool_stop')
+$clean = @('session_clear', 'usage none', 'view grid', 'sessions', 'subagent_stop', 'tool_stop')   # no usage tile: one tile, the crop above
 Shot 'icon-processing' ($clean + 'idle' + 'processing') 1.5 $icon $iconWidth
 Shot 'icon-subagents'  @('idle', 'processing', 'subagent_start') 1.5 $icon $iconWidth
 Shot 'icon-tool'       @('subagent_stop', 'idle', 'processing', 'tool_start') 1.5 $icon $iconWidth
@@ -62,15 +62,16 @@ if (-not $Quick) {
     Shot 'icon-link-lost' @('idle', 'ping') 66 $icon $iconWidth
 }
 
-# ---- six sessions on the dashboard ----
+# ---- five sessions and the usage tile on the dashboard (made-up numbers) ----
 $t = "`t"
+$usage = "usage account${t}age=40${t}limit=Current session|42|5520|normal${t}limit=This week|63|302400|warning${t}limit=This week (Opus)|18|302400|normal${t}split=Claude Code:52|Chats:38|Cowork:10"
 $sessions = @(
     "session a1${t}label=api${t}state=processing${t}subagents=0${t}tool=1${t}project=api${t}root=E:\work\api",
     "session b2${t}label=web${t}state=waiting_user${t}subagents=0${t}tool=0${t}project=web${t}root=E:\work\web",
-    "session c3${t}label=infra #1${t}state=processing${t}subagents=2${t}tool=0${t}project=infra${t}root=E:\work\infra",
-    "session d4${t}label=infra #2${t}state=question${t}subagents=0${t}tool=0${t}project=infra${t}root=E:\work\infra",
+    "session c3${t}label=infra${t}state=processing${t}subagents=2${t}tool=0${t}project=infra${t}root=E:\work\infra",
     "session e5${t}label=docs${t}state=idle${t}subagents=0${t}tool=0${t}project=docs${t}root=E:\work\docs",
-    "session f6${t}label=mobile${t}state=paused${t}subagents=0${t}tool=0${t}project=mobile${t}root=E:\work\mobile"
+    "session f6${t}label=mobile${t}state=paused${t}subagents=0${t}tool=0${t}project=mobile${t}root=E:\work\mobile",
+    $usage
 )
 $common = "project=api${t}project_root=E:\work\api${t}session_id=a1${t}transcript_path=C:\Users\me\.claude\projects\e--work-api\a1.jsonl${t}cwd=E:\work\api${t}permission_mode=default"
 $events = @(
@@ -83,8 +84,11 @@ $events = @(
 Shot 'tab5-dashboard' (@('session_clear', 'ping') + $sessions) 4 $null 0
 Shot 'tab5-detail'    ($events + 'view detail a1') 2 $null 0
 
+# ---- the screensaver, with the same made-up numbers ----
+Shot 'tab5-saver' @('view grid', 'ping', $usage, 'view saver') 2 $null 0
+
 # ---- leave the board as we found it ----
 $done = Join-Path $OutDir 'cleanup.png'
-& $shot -PortName $PortName -OutFile $done -Setup @('view grid', 'session_clear', 'idle') | Out-Null
+& $shot -PortName $PortName -OutFile $done -Setup @('view grid', 'usage none', 'session_clear', 'idle') | Out-Null
 Remove-Item -LiteralPath $done -Force -ErrorAction SilentlyContinue
 Get-ChildItem $OutDir -Filter *.png | ForEach-Object { "{0,-24} {1,7:N0} KB" -f $_.Name, ($_.Length / 1KB) }

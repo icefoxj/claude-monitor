@@ -255,6 +255,7 @@ extern "C" void app_main(void){
                 case monitor::Command::SessionEnd:   break;
                 case monitor::Command::SessionClear: break;
                 case monitor::Command::View:         break;   // no pages on the cube
+                case monitor::Command::Usage:        break;   // no screensaver either (and never sent to it)
                 case monitor::Command::Screenshot: {
                     // The SPI panel's memory cannot be read back reliably; the Tab5 answers this
                     static const char kNo[] = "ERROR screenshot: not supported on this board\n";

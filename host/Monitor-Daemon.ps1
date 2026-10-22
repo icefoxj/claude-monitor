@@ -44,8 +44,32 @@
     one JSON line to EventLogPath (prompts and tool inputs included: mind
     what ends up in that file).
 
+    The account's plan usage (the 5-hour session, the week, per-model weeks,
+    what /usage shows) goes to a device whose features= lists "usage" (the
+    Tab5's screensaver) as one "usage" line whenever it changes. It comes
+    from the status line, when one is set up to POST its input to
+    /statusline (documented, but only terminal sessions run a status line,
+    not the VS Code extension), and with -AccountUsage from the endpoint
+    /usage itself reads, polled every UsagePollSeconds with the access token
+    Claude Code keeps in CredentialsPath. That endpoint is undocumented and
+    may change; the token is only sent to api.anthropic.com, never logged.
+
+    The Claude desktop app's Code tab fires the same hooks as the CLI, but
+    Cowork and the app's scheduled tasks fire none: the app tells you
+    through Windows notifications ("Scheduled task needs your approval").
+    With -DesktopNotifications the daemon reads those, read-only, from the
+    database Windows keeps for the Action Center (wpndatabase.db, through
+    the system's winsqlite3.dll) and shows them as one more session,
+    "Claude Desktop": the red sign for one that needs you, the green check
+    for the others. Windows does not say when you acted on it, so the red
+    sign goes when the notification leaves the Action Center, when the
+    app's window has been in front for three seconds, or after
+    DesktopWaitMinutes; the tile itself goes DesktopLingerMinutes later.
+
     Endpoints (all on http://localhost:<HttpPort>/):
       POST /hook            Claude Code hook input JSON (any event)
+      POST /statusline      Claude Code status line input JSON; answers with the text to show
+      GET  /usage           the plan usage last read, where from, and the polling state
       GET  /events[?n=20]   the last hook events as the device sees them (tag, line, time)
       POST /state/<state>   write one state straight to the device (tests)
       GET  /serial/<cmd>    write any protocol word; for "status" / "version" returns the reply
@@ -70,7 +94,13 @@ param(
     [switch]$LogEvents,
     [string]$EventLogPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\hooks.jsonl"),
     [int]$EventValueMax = 160,
-    [string]$ProjectsPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\projects.json")
+    [string]$ProjectsPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\projects.json"),
+    [switch]$AccountUsage,            # poll the plan usage the way /usage does, with Claude Code's login
+    [int]$UsagePollSeconds = 300,
+    [string]$CredentialsPath = (Join-Path (Join-Path $HOME '.claude') '.credentials.json'),
+    [switch]$DesktopNotifications,    # show the Claude desktop app's notifications (Cowork, scheduled tasks) as a session
+    [int]$DesktopWaitMinutes = 30,
+    [int]$DesktopLingerMinutes = 10
 )
 
 $ErrorActionPreference = 'Continue'
@@ -758,12 +788,482 @@ function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
     if (-not $eventSent) { Send-Event $eventLine }
 }
 
+# ---------------- account usage -> the device's screensaver ----------------
+
+$script:usage          = [ordered]@{}            # key -> @{ label; percent; resetsAt (DateTimeOffset or $null); severity }
+$script:usageSplit     = @()                     # the week by app: @{ label; percent }, from the account
+$script:usageSource    = $null                   # 'statusline' or 'account'
+$script:usageAt        = [datetime]::MinValue    # when the numbers were read
+$script:usageNote      = $(if ($AccountUsage) { 'not polled yet' } else { 'account polling off (no -AccountUsage)' })
+$script:usageNextPoll  = (Get-Date).AddSeconds(5)
+$script:usageTask      = $null                   # the poll in flight
+$script:usageHttp      = $null
+$script:usageCheckAt   = [datetime]::MinValue
+$script:deviceUsageKey = $null                   # what the device last got
+$script:deviceUsageAt  = [datetime]::MinValue
+
+function Set-UsageNote([string]$note) {
+    if ($note -ne $script:usageNote) { Log "usage: $note" }
+    $script:usageNote = $note
+}
+
+function Get-UsageLabel([string]$kind, [string]$model) {
+    switch ($kind) {
+        'session'       { return 'Current session' }
+        'weekly_all'    { return 'This week' }
+        'weekly_scoped' { if ($model) { return "This week ($model)" } else { return 'This week (scoped)' } }
+        default         { return ($kind -replace '_', ' ') }
+    }
+}
+
+# A reset time as the sources give it: ISO 8601 (ConvertFrom-Json may have
+# made it a DateTime already) or Unix seconds (the status line)
+function ConvertTo-ResetTime($v) {
+    if ($null -eq $v -or "$v" -eq '') { return $null }
+    if ($v -is [datetime]) { return [DateTimeOffset]$v }
+    if ($v -is [ValueType]) { return [DateTimeOffset]::FromUnixTimeSeconds([int64]$v) }
+    try { return [DateTimeOffset]::Parse([string]$v, [cultureinfo]::InvariantCulture) } catch { return $null }
+}
+
+# The endpoint's answer: its "limits" list (session, weekly_all,
+# weekly_scoped per model), else the older five_hour / seven_day objects
+function Set-UsageFromAccount($j) {
+    $next = [ordered]@{}
+    if ($j.limits) {
+        foreach ($l in $j.limits) {
+            if ($null -eq $l.percent) { continue }
+            $model = [string]$l.scope.model.display_name
+            $key = if ($model) { "$($l.kind):$model" } else { [string]$l.kind }
+            $next[$key] = @{ label = (Get-UsageLabel $l.kind $model); percent = [double]$l.percent
+                             resetsAt = (ConvertTo-ResetTime $l.resets_at); severity = [string]$l.severity }
+        }
+    } else {
+        foreach ($p in @(@('five_hour', 'session'), @('seven_day', 'weekly_all'))) {
+            $w = $j.($p[0])
+            if ($w -and $null -ne $w.utilization) {
+                $next[$p[1]] = @{ label = (Get-UsageLabel $p[1] ''); percent = [double]$w.utilization
+                                  resetsAt = (ConvertTo-ResetTime $w.resets_at); severity = '' }
+            }
+        }
+    }
+    if ($next.Count -eq 0) { return $false }
+    $script:usage = $next
+    # How the week divides between the apps (Claude Code, chats, Cowork)
+    $script:usageSplit = @(foreach ($r in @($j.seven_day_breakdown.rows)) {
+        if ($r -and $null -ne $r.percent -and [double]$r.percent -gt 0) {
+            @{ label = [string]$(if ($r.display_name) { $r.display_name } else { $r.key }); percent = [double]$r.percent }
+        }
+    })
+    $script:usageSource = 'account'
+    $script:usageAt = Get-Date
+    return $true
+}
+
+# The status line's rate_limits: the session and the week only, so the
+# per-model rows the account poll found stay as they are
+function Set-UsageFromStatusLine($rl) {
+    $any = $false
+    foreach ($p in @(@('five_hour', 'session'), @('seven_day', 'weekly_all'))) {
+        $w = $rl.($p[0])
+        if (-not $w -or $null -eq $w.used_percentage) { continue }
+        $script:usage[$p[1]] = @{ label = (Get-UsageLabel $p[1] ''); percent = [double]$w.used_percentage
+                                  resetsAt = (ConvertTo-ResetTime $w.resets_at); severity = '' }
+        $any = $true
+    }
+    if ($any) {
+        $script:usageSource = 'statusline'
+        $script:usageAt = Get-Date
+    }
+    return $any
+}
+
+# "usage <source>\tage=<s>\tlimit=<label>|<percent>|<resets in s>|<severity>..."
+function Format-UsageLine {
+    if ($script:usage.Count -eq 0) { return 'usage none' }
+    $inv = [cultureinfo]::InvariantCulture
+    $now = [DateTimeOffset]::Now
+    $age = [int][Math]::Max(0, ((Get-Date) - $script:usageAt).TotalSeconds)
+    $parts = @("usage $($script:usageSource)", "age=$age")
+    foreach ($e in $script:usage.Values) {
+        $reset = -1
+        if ($e.resetsAt) { $reset = [int][Math]::Max(0, ($e.resetsAt - $now).TotalSeconds) }
+        $label = $e.label -replace '[\t|]', ' '
+        if ($label.Length -gt 28) { $label = $label.Substring(0, 28) }
+        $parts += 'limit=' + [string]::Format($inv, '{0}|{1:0.#}|{2}|{3}', $label, $e.percent, $reset, $e.severity)
+    }
+    if ($script:usageSplit.Count) {
+        $parts += 'split=' + (@($script:usageSplit | ForEach-Object {
+            [string]::Format($inv, '{0}:{1:0.#}', ($_.label -replace '[\t|:]', ' '), $_.percent)
+        }) -join '|')
+    }
+    return ($parts -join "`t")
+}
+
+# Sends the usage line when the numbers changed, when new ones arrived and
+# the device's copy is five minutes old (its "updated ... ago"), or forced.
+# A window whose reset time has passed is dropped, as Claude Code does.
+function Send-Usage([bool]$force = $false) {
+    if (-not $script:serial) { return }
+    if (([string]$script:deviceInfo.features) -notmatch '(^|,)usage(,|$)') { return }
+    $now = [DateTimeOffset]::Now
+    foreach ($k in @($script:usage.Keys)) {
+        $r = $script:usage[$k].resetsAt
+        if ($r -and $r -lt $now) { $script:usage.Remove($k) }
+    }
+    $inv = [cultureinfo]::InvariantCulture
+    $key = "$($script:usageSource)|" + (@($script:usage.Values | ForEach-Object {
+        $min = if ($_.resetsAt) { [int]($_.resetsAt.ToUnixTimeSeconds() / 60) } else { '-' }
+        [string]::Format($inv, '{0}={1:0.#}@{2}', $_.label, $_.percent, $min)
+    }) -join ';') + '|' + (@($script:usageSplit | ForEach-Object { "$($_.label)=$($_.percent)" }) -join ';')
+    $changed = $key -ne $script:deviceUsageKey
+    $refresh = $script:usageAt -gt $script:deviceUsageAt -and ((Get-Date) - $script:deviceUsageAt).TotalSeconds -ge 300
+    if (-not ($force -or $changed -or $refresh)) { return }
+    $line = Format-UsageLine
+    if (Send-Serial $line) {
+        if ($force -or $changed) { Log "device <- $($line -replace "`t", ' ')" }
+        $script:deviceUsageKey = $key
+        $script:deviceUsageAt = Get-Date
+    }
+}
+
+# Starts one poll of the endpoint /usage reads, without waiting for it: the
+# main loop picks the answer up (Complete-UsagePoll)
+function Start-UsagePoll {
+    $script:usageNextPoll = (Get-Date).AddSeconds($UsagePollSeconds)
+    try {
+        $o = (Get-Content -LiteralPath $CredentialsPath -Raw -ErrorAction Stop | ConvertFrom-Json).claudeAiOauth
+    } catch {
+        Set-UsageNote "no Claude Code login in $CredentialsPath"
+        return
+    }
+    if (-not $o -or -not $o.accessToken) { Set-UsageNote 'no claude.ai login in the credentials file'; return }
+    if ($o.expiresAt -and [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$o.expiresAt) -lt [DateTimeOffset]::Now.AddMinutes(1)) {
+        Set-UsageNote 'access token expired: waiting for Claude Code to refresh it'
+        $script:usageNextPoll = (Get-Date).AddMinutes(2)
+        return
+    }
+    try {
+        if (-not $script:usageHttp) {
+            $script:usageHttp = [System.Net.Http.HttpClient]::new()
+            $script:usageHttp.Timeout = [TimeSpan]::FromSeconds(15)
+        }
+        $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://api.anthropic.com/api/oauth/usage')
+        $req.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', [string]$o.accessToken)
+        $req.Headers.Add('anthropic-beta', 'oauth-2025-04-20')
+        $req.Headers.UserAgent.ParseAdd('claude-monitor')
+        $script:usageTask = $script:usageHttp.SendAsync($req)
+    } catch {
+        Set-UsageNote "poll failed: $($_.Exception.Message)"
+    }
+}
+
+function Complete-UsagePoll {
+    $t = $script:usageTask
+    $script:usageTask = $null
+    if ($t.IsFaulted -or $t.IsCanceled) {
+        $msg = if ($t.Exception) { $t.Exception.GetBaseException().Message } else { 'timed out' }
+        Set-UsageNote "poll failed: $msg"
+        return
+    }
+    $resp = $t.Result
+    try {
+        $code = [int]$resp.StatusCode
+        if ($code -eq 429) {
+            $script:usageNextPoll = (Get-Date).AddMinutes(15)
+            Set-UsageNote 'rate limited (HTTP 429): next poll in 15 min'
+            return
+        }
+        if ($code -ne 200) { Set-UsageNote "poll failed: HTTP $code"; return }
+        $j = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+        if (Set-UsageFromAccount $j) {
+            Set-UsageNote 'ok'
+            Send-Usage
+        } else {
+            Set-UsageNote 'no limits in the answer'
+        }
+    } catch {
+        Set-UsageNote "poll failed: $($_.Exception.Message)"
+    } finally {
+        $resp.Dispose()
+    }
+}
+
+function Get-UsageObject {
+    [ordered]@{
+        source          = $script:usageSource
+        read_at         = $(if ($script:usageAt -gt [datetime]::MinValue) { $script:usageAt.ToString('s') } else { $null })
+        account_polling = [bool]$AccountUsage
+        note            = $script:usageNote
+        limits          = @($script:usage.GetEnumerator() | ForEach-Object {
+            [ordered]@{ key = $_.Key; label = $_.Value.label; percent = $_.Value.percent
+                        resets_at = $(if ($_.Value.resetsAt) { $_.Value.resetsAt.ToString('o') } else { $null }); severity = $_.Value.severity }
+        })
+        week_by_app     = @($script:usageSplit | ForEach-Object { [ordered]@{ label = $_.label; percent = $_.percent } })
+    }
+}
+
+# What the status line shows: model, context, and the two windows
+function Format-StatusLineText($j) {
+    $parts = @()
+    if ($j.model.display_name) { $parts += [string]$j.model.display_name }
+    if ($null -ne $j.context_window.used_percentage) { $parts += 'ctx {0:0}%' -f [double]$j.context_window.used_percentage }
+    $s = $script:usage['session']
+    if ($s) {
+        $t = '5h {0:0}%' -f $s.percent
+        if ($s.resetsAt) { $t += ' (resets {0:HH:mm})' -f $s.resetsAt.LocalDateTime }
+        $parts += $t
+    }
+    $w = $script:usage['weekly_all']
+    if ($w) { $parts += '7d {0:0}%' -f $w.percent }
+    return ($parts -join ' · ')
+}
+
+# ---------------- the Claude desktop app's notifications ----------------
+
+$DesktopId = 'claude-desktop'
+$script:desktopOn     = $false
+$script:desktopNote   = $(if ($DesktopNotifications) { 'starting' } else { 'off (no -DesktopNotifications)' })
+$script:desktopDb     = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft\Windows\Notifications\wpndatabase.db'
+$script:desktopSeen   = @{}   # notification id -> $true, for the ones still in the database
+$script:desktopWait   = @{}   # notification id -> arrival, for the ones that need you
+$script:desktopNextAt = [datetime]::MinValue
+$script:desktopFocusSince = [datetime]::MinValue
+$script:desktopIdleSince  = [datetime]::MinValue
+$script:desktopLast   = $null # the last one: @{ time; title; state }
+
+$desktopSource = @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+// The Claude desktop app's toasts from the Action Center's database, read
+// with the SQLite that ships with Windows, and the program owning the
+// foreground window
+public static class DesktopToasts {
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_open_v2")]
+    static extern int Open(byte[] filename, out IntPtr db, int flags, IntPtr vfs);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_close_v2")]
+    static extern int Close(IntPtr db);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_busy_timeout")]
+    static extern int BusyTimeout(IntPtr db, int ms);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_prepare_v2")]
+    static extern int Prepare(IntPtr db, byte[] sql, int nByte, out IntPtr stmt, IntPtr tail);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_step")]
+    static extern int Step(IntPtr stmt);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_finalize")]
+    static extern int Finalize(IntPtr stmt);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_int64")]
+    static extern long ColumnInt64(IntPtr stmt, int col);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_blob")]
+    static extern IntPtr ColumnBlob(IntPtr stmt, int col);
+    [DllImport("winsqlite3.dll", EntryPoint = "sqlite3_column_bytes")]
+    static extern int ColumnBytes(IntPtr stmt, int col);
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    static extern bool QueryFullProcessImageNameW(IntPtr process, int flags, StringBuilder name, ref int size);
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr handle);
+
+    public class Toast {
+        public long Id;
+        public long Arrival;      // FILETIME, UTC
+        public string Payload;    // the toast's XML
+    }
+
+    // The Store app is "Claude_<publisher>!Claude"; the older installer's
+    // ids carry "AnthropicClaude"
+    const string Sql =
+        "SELECT n.Id, n.ArrivalTime, n.Payload FROM Notification n " +
+        "JOIN NotificationHandler h ON h.RecordId = n.HandlerId " +
+        "WHERE h.PrimaryId LIKE 'Claude%!Claude' OR h.PrimaryId LIKE '%AnthropicClaude%' ORDER BY n.Id";
+
+    public static List<Toast> Read(string path) {
+        var list = new List<Toast>();
+        IntPtr db;
+        int rc = Open(Encoding.UTF8.GetBytes(path + "\0"), out db, 1 /* SQLITE_OPEN_READONLY */, IntPtr.Zero);
+        if (rc != 0) {
+            if (db != IntPtr.Zero) Close(db);
+            throw new Exception("sqlite open failed (" + rc + ")");
+        }
+        try {
+            BusyTimeout(db, 250);
+            IntPtr stmt;
+            rc = Prepare(db, Encoding.UTF8.GetBytes(Sql + "\0"), -1, out stmt, IntPtr.Zero);
+            if (rc != 0) throw new Exception("sqlite prepare failed (" + rc + ")");
+            try {
+                while (Step(stmt) == 100 /* SQLITE_ROW */) {
+                    var t = new Toast { Id = ColumnInt64(stmt, 0), Arrival = ColumnInt64(stmt, 1), Payload = "" };
+                    int n = ColumnBytes(stmt, 2);
+                    IntPtr p = ColumnBlob(stmt, 2);
+                    if (n > 0 && p != IntPtr.Zero) {
+                        var bytes = new byte[n];
+                        Marshal.Copy(p, bytes, 0, n);
+                        t.Payload = Encoding.UTF8.GetString(bytes).TrimStart('﻿', '\0');
+                    }
+                    list.Add(t);
+                }
+            } finally {
+                Finalize(stmt);
+            }
+        } finally {
+            Close(db);
+        }
+        return list;
+    }
+
+    // Full path of the program whose window is in front, or ""
+    public static string ForegroundImage() {
+        IntPtr w = GetForegroundWindow();
+        if (w == IntPtr.Zero) return "";
+        uint pid;
+        GetWindowThreadProcessId(w, out pid);
+        IntPtr h = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid);
+        if (h == IntPtr.Zero) return "";
+        try {
+            var sb = new StringBuilder(1024);
+            int size = sb.Capacity;
+            return QueryFullProcessImageNameW(h, 0, sb, ref size) ? sb.ToString() : "";
+        } finally {
+            CloseHandle(h);
+        }
+    }
+}
+'@
+
+function Set-DesktopNote([string]$note) {
+    if ($note -ne $script:desktopNote) { Log "desktop: $note" }
+    $script:desktopNote = $note
+}
+
+# Starts watching, taking what is already in the Action Center as seen
+# (except the last five minutes, so a restart does not miss a fresh one)
+function Initialize-DesktopWatch {
+    if (-not $DesktopNotifications) { return }
+    if (-not $IsWindows) { Set-DesktopNote 'not Windows: off'; return }
+    if (-not (Test-Path -LiteralPath $script:desktopDb)) { Set-DesktopNote "no notification database at $($script:desktopDb)"; return }
+    try {
+        Add-Type -TypeDefinition $desktopSource -ErrorAction Stop
+        $recent = (Get-Date).AddMinutes(-5)
+        foreach ($t in [DesktopToasts]::Read($script:desktopDb)) {
+            if ([DateTime]::FromFileTimeUtc($t.Arrival).ToLocalTime() -lt $recent) { $script:desktopSeen[$t.Id] = $true }
+        }
+        $script:desktopOn = $true
+        Set-DesktopNote "watching the Claude app's notifications ($($script:desktopSeen.Count) already there)"
+    } catch {
+        Set-DesktopNote "cannot read notifications: $($_.Exception.Message)"
+    }
+}
+
+function Get-ToastTexts([string]$payload) {
+    $out = @()
+    try {
+        $x = [xml]$payload
+        foreach ($n in $x.SelectNodes('//text')) { $t = $n.InnerText.Trim(); if ($t) { $out += $t } }
+    } catch {}
+    if (-not $out) { $out = @('(notification)') }
+    return ,$out
+}
+
+# One notification as an event line for the tile's inspector
+function Format-DesktopEvent([string]$title, [string]$body, [string]$state, [datetime]$arrival) {
+    $e = [pscustomobject][ordered]@{
+        hook_event_name = 'DesktopNotification'; session_id = $DesktopId
+        title = $title; body = $body; state = $state; arrived = $arrival.ToString('HH:mm:ss'); app = 'Claude Desktop'
+    }
+    return (Format-EventLine $e 'Notification/desktop' 'Claude Desktop' '')
+}
+
+# Keeps the "Claude Desktop" session in step with the notifications: red
+# while one needs you, then the green check, gone after DesktopLingerMinutes
+function Sync-DesktopSession([bool]$fresh) {
+    $now = Get-Date
+    $exists = $script:sessions.ContainsKey($DesktopId)
+    if (-not $exists -and -not $fresh) { return }
+    $s = Get-Session $DesktopId
+    if (-not $exists) { $s.project = 'Claude Desktop'; $s.root = ''; $s.first = $now }
+    $want = if ($script:desktopWait.Count -gt 0) { 'waiting_user' } else { 'idle' }
+    if ($fresh -or $want -ne $s.state) {
+        if ($want -eq 'idle') { $script:desktopIdleSince = $now }
+        $s.state = $want
+        $s.last = $now
+        Sync-Device
+    } elseif ($want -eq 'idle' -and ($now - $script:desktopIdleSince).TotalMinutes -ge $DesktopLingerMinutes) {
+        $script:sessions.Remove($DesktopId)
+        $script:desktopLast = $null
+        Log 'desktop: tile removed'
+        Sync-Device
+    }
+}
+
+function Update-DesktopToasts {
+    $now = Get-Date
+    try {
+        $toasts = [DesktopToasts]::Read($script:desktopDb)
+    } catch {
+        Set-DesktopNote "read failed: $($_.Exception.Message)"
+        return
+    }
+    $present = @{}
+    $lines = @()
+    foreach ($t in $toasts) {
+        $present[$t.Id] = $true
+        if ($script:desktopSeen.ContainsKey($t.Id)) { continue }
+        $script:desktopSeen[$t.Id] = $true
+        $arrival = [DateTime]::FromFileTimeUtc($t.Arrival).ToLocalTime()
+        $texts = Get-ToastTexts $t.Payload
+        $title = $texts[0]
+        $body = (@($texts | Select-Object -Skip 1)) -join ' '
+        $needsYou = "$title $body" -match 'approv|permission|needs? your|waiting for you|input needed|requires your'
+        $state = if ($needsYou) { 'waiting_user' } else { 'idle' }
+        if ($needsYou) {
+            $script:desktopWait[$t.Id] = $arrival
+            $script:desktopFocusSince = [datetime]::MinValue
+        }
+        $script:desktopLast = @{ time = $arrival.ToString('s'); title = $title; state = $state }
+        Log "desktop: '$title' -> $state"
+        $line = Format-DesktopEvent $title $body $state $arrival
+        Add-Event 'Notification/desktop' $line
+        $lines += $line
+    }
+    foreach ($id in @($script:desktopSeen.Keys)) { if (-not $present.ContainsKey($id)) { $script:desktopSeen.Remove($id) } }
+
+    # The red sign goes when its notification leaves the Action Center
+    # (clicked, dismissed), after DesktopWaitMinutes, or once the app's
+    # window has been in front for three seconds
+    foreach ($id in @($script:desktopWait.Keys)) {
+        if (-not $present.ContainsKey($id) -or ($now - $script:desktopWait[$id]).TotalMinutes -ge $DesktopWaitMinutes) {
+            $script:desktopWait.Remove($id)
+        }
+    }
+    if ($script:desktopWait.Count -gt 0) {
+        if ([DesktopToasts]::ForegroundImage() -match '\\WindowsApps\\Claude_|\\AnthropicClaude\\') {
+            if ($script:desktopFocusSince -eq [datetime]::MinValue) { $script:desktopFocusSince = $now }
+            elseif (($now - $script:desktopFocusSince).TotalSeconds -ge 3) {
+                $script:desktopWait.Clear()
+                Log 'desktop: the app has been in front: taken as seen'
+            }
+        } else {
+            $script:desktopFocusSince = [datetime]::MinValue
+        }
+    }
+
+    Sync-DesktopSession ($lines.Count -gt 0)
+    foreach ($l in $lines) { Send-Event $l }   # after the session line: the tile exists
+}
+
 # ---------------- http ----------------
 
-function Send-Response($ctx, [int]$code, [string]$body) {
+function Send-Response($ctx, [int]$code, [string]$body, [string]$type = 'application/json') {
     try {
         $ctx.Response.StatusCode  = $code
-        $ctx.Response.ContentType = 'application/json'
+        $ctx.Response.ContentType = $type
         $bytes = [Text.Encoding]::UTF8.GetBytes($body)
         $ctx.Response.ContentLength64 = $bytes.Length
         $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
@@ -796,6 +1296,23 @@ function Handle-Request($ctx) {
             Log "hook: bad payload: $($_.Exception.Message)"
             Send-Response $ctx 400 '{"error":"bad json"}'
         }
+        return
+    }
+    if ($path -eq '/statusline') {
+        # The status line command POSTs its input here and prints the answer
+        $text = ''
+        try {
+            $j = $body | ConvertFrom-Json
+            if ($j.rate_limits -and (Set-UsageFromStatusLine $j.rate_limits)) { Send-Usage }
+            $text = Format-StatusLineText $j
+        } catch {
+            Log "statusline: bad payload: $($_.Exception.Message)"
+        }
+        Send-Response $ctx 200 $text 'text/plain; charset=utf-8'
+        return
+    }
+    if ($path -eq '/usage') {
+        Send-Response $ctx 200 ((Get-UsageObject) | ConvertTo-Json -Depth 4)
         return
     }
     if ($path -match '^/state/([a-z_]+)$') {
@@ -884,6 +1401,8 @@ function Handle-Request($ctx) {
             process_watch    = $script:procSnap
             process_pids     = (Get-SessionPids)
             device_tool      = $script:deviceTool
+            usage            = (Get-UsageObject)
+            desktop          = [ordered]@{ watching = $script:desktopOn; note = $script:desktopNote; waiting = $script:desktopWait.Count; last = $script:desktopLast }
             sessions         = @($script:sessions.GetEnumerator() | ForEach-Object {
                 [ordered]@{ id = $_.Key; state = $_.Value.state; subagents = $_.Value.subagents; last = $_.Value.last.ToString('s'); project = $_.Value.project; root = $_.Value.root; pid = $_.Value.pid; tools = @($_.Value.tools.GetEnumerator() | ForEach-Object { "$($_.Value) ($($_.Key))" }) }
             })
@@ -920,6 +1439,7 @@ try {
 
 Update-ProjectNames
 Initialize-ProcessSnapshots
+Initialize-DesktopWatch
 Open-Serial | Out-Null
 $task = $listener.GetContextAsync()
 $lastHousekeeping = Get-Date
@@ -964,6 +1484,7 @@ try {
                 $script:deviceSessions = $null
                 $script:deviceTool = $false
                 $script:deviceSessionLines = @{}
+                $script:deviceUsageKey = $null
                 $script:lastInfoTry = $now
                 Read-DeviceInfo | Out-Null
                 Sync-Device $true
@@ -983,6 +1504,20 @@ try {
         }
         foreach ($line in (Read-SerialLines)) {
             if ($line -match 'STATUS|VERSION|ERROR') { Log "device: $($line.Trim())" }
+        }
+        # Plan usage: the account poll (in flight without blocking the loop),
+        # and the device's copy kept current (a device that announced its
+        # features late, a window that reset)
+        if ($AccountUsage -and -not $script:usageTask -and $now -ge $script:usageNextPoll) { Start-UsagePoll }
+        if ($script:usageTask -and $script:usageTask.IsCompleted) { Complete-UsagePoll }
+        if ($now -ge $script:usageCheckAt) {
+            $script:usageCheckAt = $now.AddSeconds(5)
+            Send-Usage
+        }
+        # The desktop app's notifications, every three seconds
+        if ($script:desktopOn -and $now -ge $script:desktopNextAt) {
+            $script:desktopNextAt = $now.AddSeconds(3)
+            Update-DesktopToasts
         }
         if (($now - $lastHousekeeping).TotalSeconds -ge 60) {
             $before = $script:sessions.Count

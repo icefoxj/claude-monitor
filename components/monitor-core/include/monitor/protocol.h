@@ -52,14 +52,18 @@
 //                     fmt=rgb888", one "ROW <y> <base64>" per row, "END"
 //                     (tools/Get-Screenshot.ps1 turns it into a PNG); a board
 //                     that cannot read its panel back answers ERROR
+//   "usage <source>\tage=<s>\tlimit=<label>|<percent>|<resets in s>|<severity>..."
+//                  -> the account's plan usage (see usage.h), for boards that
+//                     list "usage" in features= (the Tab5's screensaver)
+//   "view saver"     -> the Tab5 shows its screensaver now (captures, tests)
 
 namespace monitor {
 
 // Bumped when words are added: 1 = the 1.0/1.1 set (states, subagents,
 // status); 2 = sessions, ping, calibrate, version; 3 = event;
 // 4 = tool_start/stop; 5 = session, session_end, session_clear;
-// 6 = screenshot, view
-constexpr int kProtocolVersion = 6;
+// 6 = screenshot, view; 7 = usage
+constexpr int kProtocolVersion = 7;
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
@@ -83,12 +87,12 @@ bool isAnimated(State s);
 
 enum class Command { Unknown, SetState, SubagentStart, SubagentStop, ToolStart, ToolStop,
                      Status, Version, Ping, Sessions, Calibrate, Event,
-                     Session, SessionEnd, SessionClear, Screenshot, View };
+                     Session, SessionEnd, SessionClear, Screenshot, View, Usage };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;
     State state = State::Off;   // meaningful when kind == SetState
-    std::string arg;            // the rest of the line for Sessions, Calibrate, Event, Session, SessionEnd, View
+    std::string arg;            // the rest of the line for Sessions, Calibrate, Event, Session, SessionEnd, View, Usage
 };
 
 // One field of a hook event, as the host sent it

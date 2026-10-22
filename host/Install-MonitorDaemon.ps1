@@ -12,7 +12,9 @@ param(
     [switch]$Uninstall,
     [string]$PortName = "COM5",
     [int]$HttpPort = 47831,
-    [switch]$LogEvents   # also append every raw hook payload to %LOCALAPPDATA%\claude-monitor\hooks.jsonl
+    [switch]$LogEvents,      # also append every raw hook payload to %LOCALAPPDATA%\claude-monitor\hooks.jsonl
+    [switch]$AccountUsage,           # poll the plan usage like /usage does, with Claude Code's login (for the Tab5's screensaver)
+    [switch]$DesktopNotifications    # show the Claude desktop app's notifications (Cowork, scheduled tasks) as a session
 )
 
 $taskName = "claude-monitor daemon"
@@ -40,6 +42,8 @@ $conhost = Join-Path $env:SystemRoot "System32\conhost.exe"
 
 $argument = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`" -PortName $PortName -HttpPort $HttpPort"
 if ($LogEvents) { $argument += " -LogEvents" }
+if ($AccountUsage) { $argument += " -AccountUsage" }
+if ($DesktopNotifications) { $argument += " -DesktopNotifications" }
 # Through a headless conhost: with Windows Terminal as the default terminal
 # the console is handed to a Terminal window that -WindowStyle Hidden does
 # not hide, and closing that window kills the daemon (exit 0xC000013A)

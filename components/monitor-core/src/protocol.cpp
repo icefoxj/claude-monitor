@@ -138,6 +138,11 @@ ParsedCommand parseCommand(std::string_view line){
         cmd.arg = std::string(arg);
         return cmd;
     }
+    if (word == "usage"){
+        cmd.kind = Command::Usage;
+        cmd.arg = std::string(arg);
+        return cmd;
+    }
     State s;
     if (parseState(word, s)){
         cmd.kind = Command::SetState;

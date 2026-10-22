@@ -15,6 +15,11 @@
 // which way the sensor maps to the panel is calibrated per unit with
 // "calibrate rot=<upright rotation now> sign=<1|-1>" and stored in NVS.
 //
+// After ten minutes with every tile idle (or off) a screensaver takes the
+// screen: a card with the account's plan usage, sent by the host in
+// "usage" lines, drifting slowly over the panel at a lower brightness. A
+// tap, any state change or a new tile brings the tiles back.
+//
 // The host sends one "session" line per live session (state, label,
 // subagents, tool flag) and "event" lines with the hook payloads; the
 // aggregate state words the cube uses are still accepted and drive a
@@ -52,16 +57,19 @@
 #include "monitor/icons.h"
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
+#include "monitor/screensaver.h"
 #include "monitor/screenshot.h"
 #include "monitor/tilt.h"
 #include "monitor/ui.h"
+#include "monitor/usage.h"
+#include "monitor/usageview.h"
 #include "monitor/version.h"
 
 namespace {
 
 constexpr const char* TAG       = "monitor";
 constexpr const char* kBoard    = "tab5";
-constexpr const char* kFeatures = "events,touch,rotate,sessions";
+constexpr const char* kFeatures = "events,touch,rotate,sessions,usage";
 constexpr float kPi = 3.14159265f;
 
 constexpr int   kMaxSessions = 6;
@@ -82,12 +90,16 @@ TextStyle textStyleFor(int tileHeight){
     return { &fonts::DejaVu18, 32 };
 }
 
-constexpr uint8_t kBrightness    = 160;
-constexpr uint8_t kDimBrightness = 40;    // while the host's heartbeat is missing
-constexpr uint8_t kVolume        = 128;
+constexpr uint8_t kBrightness      = 160;
+constexpr uint8_t kDimBrightness   = 40;    // while the host's heartbeat is missing
+constexpr uint8_t kSaverBrightness = 70;    // the screensaver
+constexpr uint8_t kVolume          = 128;
 
-// Every tile idle, or no host, for this long (frames at ~30 fps): screen
-// off until the next state change or a tap
+// Every tile idle (or off) for this long, in frames at 30 fps: the
+// screensaver, until the next state change or a tap
+constexpr int kSaverFrames = 10 * 60 * 30;     // 10 min
+
+// No host for this long: screen off until it comes back or a tap
 constexpr int kAutoOffFrames = 30 * 60 * 30;   // 30 min
 
 // Names, clocks and the inspector refresh once a second
@@ -162,6 +174,8 @@ struct Slot {
 std::array<Slot, kMaxSessions> slots;
 Slot placeholder;   // shown while no session lines have arrived; driven by the aggregate words
 M5Canvas viewCanvas(&M5.Display);
+monitor::UsageSaver saver(M5.Display);   // the screensaver; its card sprite lives in PSRAM
+M5Canvas usageCanvas(&M5.Display);       // the bars of the usage tile in the grid
 
 enum class View { Grid, Detail };
 
@@ -323,6 +337,15 @@ extern "C" void app_main(void){
     Rect  detailLabel, detailClock;   // text bands on the detail page
     TextStyle style = textStyleFor(720);   // for the layout on screen
 
+    // The plan usage the host sent, and its tile: the last cell of the grid,
+    // next to the sessions, whenever there are numbers to show
+    monitor::Usage usage;
+    int64_t usageMs    = 0;
+    bool    usageShown = false;
+    Rect    usageTile, usageBox;            // the whole tile; where the bars go
+    int     usageNameY = 0, usageAgeY = 0;
+    auto hasUsage = [&]() { return usage.source != "none" && !usage.limits.empty(); };
+
     // The tiles on screen: the live sessions, or the placeholder
     auto visibleSlots = [&]() {
         std::vector<Slot*> v;
@@ -385,23 +408,27 @@ extern "C" void app_main(void){
             detail->place(iconSize, ix, iy);
             detail->ui.setVisible(true);
             detail->ui.redraw();
+            usageShown = false;
             viewDirty = true;
         } else {
             view = View::Grid;
             auto vis = visibleSlots();
-            const int n = static_cast<int>(vis.size());
+            const int sessions = static_cast<int>(vis.size());
+            const bool withUsage = hasUsage();
+            const int n = sessions + (withUsage ? 1 : 0);   // the usage tile takes the last cell
             int cols, rows;
             if (n <= 1)      { cols = 1; rows = 1; }
             else if (n == 2) { cols = landscape ? 2 : 1; rows = landscape ? 1 : 2; }
             else if (n <= 4) { cols = 2; rows = 2; }
-            else             { cols = landscape ? 3 : 2; rows = landscape ? 2 : 3; }
+            else if (n <= 6) { cols = landscape ? 3 : 2; rows = landscape ? 2 : 3; }
+            else             { cols = landscape ? 4 : 2; rows = landscape ? 2 : 4; }
             const int tw = W / cols;
             const int th = H / rows;
             style = textStyleFor(th);
             int room = th - 2 * style.band;
             if (tw - 2 * kTileGap < room) room = tw - 2 * kTileGap;
             int iconSize = static_cast<int>(room * kIconScale) & ~1;
-            for (int i = 0; i < n; i++){
+            for (int i = 0; i < sessions; i++){
                 Slot* s = vis[i];
                 s->tile = { (i % cols) * tw, (i / cols) * th, tw, th };
                 int groupTop = s->tile.y + (th - (2 * style.band + iconSize)) / 2;
@@ -413,8 +440,44 @@ extern "C" void app_main(void){
                 s->ui.setVisible(true);
                 s->ui.redraw();
             }
+            // Same bands as its neighbours: "Claude usage" where the names
+            // are, the bars where the icons are (a little wider), the age
+            // where the clocks are
+            usageShown = withUsage;
+            if (withUsage){
+                const int i = sessions;
+                usageTile = { (i % cols) * tw, (i / cols) * th, tw, th };
+                int groupTop = usageTile.y + (th - (2 * style.band + iconSize)) / 2;
+                usageNameY = groupTop + style.band / 2;
+                usageAgeY  = groupTop + style.band + iconSize + style.band / 2;
+                usageBox   = { usageTile.x + 2 * kTileGap, groupTop + style.band, tw - 4 * kTileGap, iconSize };
+                if (usageCanvas.width() != usageBox.w || usageCanvas.height() != usageBox.h){
+                    usageCanvas.deleteSprite();
+                    usageCanvas.setPsram(true);
+                    usageCanvas.setColorDepth(16);
+                    if (!usageCanvas.createSprite(usageBox.w, usageBox.h)){
+                        ESP_LOGE(TAG, "usage canvas allocation failed");
+                    }
+                }
+            }
         }
         textDirty = true;
+    };
+
+    // The usage tile: the bars, then its name and the age of the numbers
+    auto drawUsageTile = [&]() {
+        if (!usageShown || usageCanvas.width() == 0) return;
+        const int32_t elapsed = static_cast<int32_t>((nowMs() - usageMs) / 1000);
+        usageCanvas.fillScreen(TFT_BLACK);
+        monitor::drawUsageRows(usageCanvas, 0, 0, usageBox.w, usageBox.h, usage, elapsed, TFT_BLACK);
+        usageCanvas.pushSprite(usageBox.x, usageBox.y);
+        const int32_t age = usage.ageSec + elapsed;
+        char ageText[24];
+        if (age < 90)        snprintf(ageText, sizeof(ageText), "just now");
+        else if (age < 3600) snprintf(ageText, sizeof(ageText), "%d min ago", static_cast<int>(age / 60));
+        else                 snprintf(ageText, sizeof(ageText), "%d h ago", static_cast<int>(age / 3600));
+        drawCentred("Claude usage", usageTile.x + usageTile.w / 2, usageNameY, usageTile.w, style.font, TFT_WHITE);
+        drawCentred(ageText, usageTile.x + usageTile.w / 2, usageAgeY, usageTile.w, style.font, TFT_LIGHTGREY);
     };
 
     // Names and clocks (and the inspector on the detail page)
@@ -434,6 +497,7 @@ extern "C" void app_main(void){
                 drawCentred(clock, s->tile.x + s->tile.w / 2, s->clockY,
                             s->tile.w, style.font, TFT_LIGHTGREY);
             }
+            drawUsageTile();
         }
     };
 
@@ -484,18 +548,21 @@ extern "C" void app_main(void){
             armed = armed || s->ui.linkArmed();
         }
         const char* link = !armed ? "unarmed" : (lost ? "lost" : "ok");
-        char msg[320];
+        char usage[32];
+        saver.summary(usage, sizeof(usage));
+        char msg[360];
         int n = snprintf(msg, sizeof(msg),
                          "STATUS state=%s subagents=0 rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f"
                          " fw=%s board=%s sign=%d offset=%d sessions=%s link=%s work=%d screen=%s tool=%d"
-                         " events=%d sector=%d tiles=%d view=%s\n",
+                         " events=%d sector=%d tiles=%d view=%s usage=%s\n",
                          monitor::stateName(agg), M5.Display.getRotation(),
                          atan2f(ay, ax) * 180.0f / kPi, ax, ay, az,
                          esp_app_get_description()->version, kBoard,
                          orient.config().sign, orient.config().offset,
-                         codes.empty() ? "-" : codes.c_str(), link, work, screenName(brightness), tool ? 1 : 0,
+                         codes.empty() ? "-" : codes.c_str(), link, work,
+                         saver.active() ? "saver" : screenName(brightness), tool ? 1 : 0,
                          events, orient.sector(), static_cast<int>(visibleSlots().size()),
-                         view == View::Detail ? "detail" : "grid");
+                         saver.active() ? "saver" : (view == View::Detail ? "detail" : "grid"), usage);
         writeLine(msg, n);
     };
 
@@ -515,7 +582,24 @@ extern "C" void app_main(void){
     uint8_t brightness = kBrightness;
     int     frame      = 0;
     monitor::State lastAggregate = monitor::State::Off;
-    int     aggregateFrames = 0;
+    int     aggregateFrames = 0;   // real frames the aggregate state has lasted
+
+    // The screensaver hides every tile while it runs; leaving it lays the
+    // tiles out again and restarts the idle count
+    auto enterSaver = [&]() {
+        if (saver.active()) return;
+        for (auto& s : slots) s.ui.setVisible(false);
+        placeholder.ui.setVisible(false);
+        saver.enter(nowMs());
+        ESP_LOGI(TAG, "screensaver on");
+    };
+    auto leaveSaver = [&]() {
+        if (!saver.active()) return;
+        saver.leave();
+        relayout = true;
+        aggregateFrames = 0;
+        ESP_LOGI(TAG, "screensaver off");
+    };
 
     while(true){
         M5.update();   // refreshes the touch state
@@ -618,22 +702,40 @@ extern "C" void app_main(void){
                 case monitor::Command::View: {
                     // "view grid" or "view detail <id>": what a tap does, from the host
                     // (documentation captures, debugging); "view detail" alone opens the
-                    // only tile there is
-                    if (cmd.arg.rfind("detail", 0) == 0){
+                    // only tile there is; "view saver" starts the screensaver
+                    if (cmd.arg == "saver"){
+                        enterSaver();
+                    } else if (cmd.arg.rfind("detail", 0) == 0){
+                        leaveSaver();
                         std::string id = cmd.arg.size() > 7 ? cmd.arg.substr(7) : "";
                         Slot* s = id.empty() ? nullptr : findSlot(id);
                         if (!s && visibleSlots().size() == 1) s = visibleSlots()[0];
                         if (s){ detail = s; view = View::Detail; relayout = true; }
                     } else {
+                        leaveSaver();
                         detail = nullptr; view = View::Grid; relayout = true;
                     }
                     break;
                 }
+                case monitor::Command::Usage: {
+                    monitor::Usage u;
+                    if (!monitor::parseUsage(cmd.arg, u)) break;
+                    usage = std::move(u);
+                    usageMs = nowMs();
+                    saver.setUsage(usage, usageMs);
+                    // The tile comes or goes with the numbers; the screensaver
+                    // re-lays the grid itself when it hands the screen back
+                    if (!saver.active() && view == View::Grid && hasUsage() != usageShown) relayout = true;
+                    else textDirty = true;
+                    break;
+                }
                 case monitor::Command::Screenshot:
                     // Bring the frame up to date first, then dump it row by row
-                    if (relayout){ applyLayout(); relayout = false; }
-                    drawTexts();
-                    drawInspector();
+                    if (!saver.active()){
+                        if (relayout){ applyLayout(); relayout = false; }
+                        drawTexts();
+                        drawInspector();
+                    }
                     monitor::dumpDisplay(M5.Display, writeAll);
                     break;
                 case monitor::Command::Ping:
@@ -677,11 +779,13 @@ extern "C" void app_main(void){
             }
         }
 
-        // Touch: wake, open a tile's detail page, or leave it
+        // Touch: wake, leave the screensaver, open a tile's detail page, or leave it
         auto t = M5.Touch.getDetail();
         if (t.wasClicked()){
             if (autoOff){
                 autoOff = false;
+            } else if (saver.active()){
+                leaveSaver();
             } else if (view == View::Detail){
                 view = View::Grid;
                 detail = nullptr;
@@ -699,21 +803,22 @@ extern "C" void app_main(void){
         }
         if (woke){
             autoOff = false;
+            leaveSaver();
         }
 
         if (relayout){
+            leaveSaver();   // a new tile, a turn of the tablet: show the tiles
             applyLayout();
             relayout = false;
         }
 
-        // Screen policy: everything idle for 30 min, or no host for 30 min,
-        // switches off until something changes or a tap; a lost heartbeat dims
+        // Screen policy: every tile idle (or off) for 10 min starts the
+        // screensaver; no host for 30 min switches the screen off until it
+        // comes back or a tap; a lost heartbeat dims
         monitor::State agg = aggregateState();
         if (agg != lastAggregate){
             lastAggregate = agg;
             aggregateFrames = 0;
-        } else {
-            ++aggregateFrames;
         }
         bool lost = false;
         int  silent = 0;
@@ -721,13 +826,19 @@ extern "C" void app_main(void){
             lost = lost || s->ui.linkLost();
             if (s->ui.framesSinceCommand() > silent) silent = s->ui.framesSinceCommand();
         }
-        bool idleLong = agg == monitor::State::Idle && aggregateFrames >= kAutoOffFrames;
-        bool hostGone = lost && silent >= kAutoOffFrames;
-        if (!autoOff && (idleLong || hostGone)){
-            autoOff = true;
-            ESP_LOGI(TAG, "screen off: %s", idleLong ? "idle for 30 min" : "no host for 30 min");
+        if (saver.active() && lost){
+            leaveSaver();   // the tiles say "host lost" better than stale numbers
         }
-        uint8_t want = autoOff ? 0 : (lost ? kDimBrightness : kBrightness);
+        const bool quiet = agg == monitor::State::Idle || agg == monitor::State::Off;
+        if (!saver.active() && !autoOff && !lost && quiet && aggregateFrames >= kSaverFrames){
+            enterSaver();
+        }
+        bool hostGone = lost && silent >= kAutoOffFrames;
+        if (!autoOff && hostGone){
+            autoOff = true;
+            ESP_LOGI(TAG, "screen off: no host for 30 min");
+        }
+        uint8_t want = autoOff ? 0 : (saver.active() ? kSaverBrightness : (lost ? kDimBrightness : kBrightness));
         if (want != brightness){
             brightness = want;
             M5.Display.setBrightness(brightness);
@@ -743,12 +854,15 @@ extern "C" void app_main(void){
             placeholder.ui.tick(displayOn && placeholder.ui.visible(), frames);
             tickBeep();
             frame += frames;   // since the last text refresh
+            aggregateFrames += frames;
+            if (displayOn) saver.tick(frames, nowMs());
         }
-        if (displayOn && (textDirty || frame >= kTextRefreshFrames)){
+        const bool tilesShown = displayOn && !saver.active();
+        if (tilesShown && (textDirty || frame >= kTextRefreshFrames)){
             drawTexts();
             textDirty = false;
         }
-        if (displayOn && view == View::Detail && (viewDirty || frame >= kTextRefreshFrames)){
+        if (tilesShown && view == View::Detail && (viewDirty || frame >= kTextRefreshFrames)){
             drawInspector();
             viewDirty = false;
         }
