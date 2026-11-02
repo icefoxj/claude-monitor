@@ -2,6 +2,13 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
+## Unreleased
+
+### Fixed
+
+- A session left idle no longer keeps the grey gear for hours. Claude Code now compacts a session that sat idle (54 minutes after its last answer, before the prompt cache expires), and sends the end of that compaction (`PostCompact`) only with the next prompt, so its tile showed "compacting" until you used it again. The daemon now ends a compaction when the subagent that runs it stops (it is the one `SubagentStop` without a matching `SubagentStart`) and puts the session back where it was: the green check for an idle session, the gear for a turn in progress. A compaction that sends nothing for ten minutes (`-CompactTimeoutMinutes`) ends the same way. Without the daemon the grey gear still stays until the next prompt.
+- A daemon that starts (at logon, after a restart of its task) while the Tab5 is already running now clears the board's tiles before sending its own sessions, as it already did after reopening the port. Before, it only cleared them on a reconnect, so the tiles of sessions that ended while no daemon ran (or of a demo) stayed on screen next to the live ones until the board was reset. The same holds for a board that was still booting when the port opened and answered `version` only on a later try.
+
 ## 1.4.0 — 2026-10-22
 
 The Tab5 keeps your Claude plan's usage on screen, as a tile next to the sessions or as a drifting screensaver when nothing happens, and shows what the Claude desktop app notifies (Cowork, scheduled tasks) as one more session.

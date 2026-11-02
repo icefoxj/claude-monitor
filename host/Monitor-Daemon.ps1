@@ -20,6 +20,13 @@
     for SessionTimeoutMinutes; a processing/compacting session whose
     transcript file has not changed for DeadSessionMinutes is dropped early.
 
+    A compaction ends at the SubagentStop of the subagent that runs it (one
+    that never sent SubagentStart): the session goes back to the state the
+    PreCompact interrupted. That is the only end signal when Claude Code
+    compacts a session left idle (54 minutes after its Stop), whose
+    PostCompact comes with the next prompt; CompactTimeoutMinutes without
+    events ends a compaction whose stop never came.
+
     Claude Code has no hook for the moment a permission is approved. The
     daemon learns each session's claude.exe from the hook's TCP connection
     and watches its child processes in snapshots of the process table: a
@@ -90,6 +97,7 @@ param(
     [string]$LogPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\daemon.log"),
     [int]$SessionTimeoutMinutes = 240,
     [int]$DeadSessionMinutes = 15,
+    [int]$CompactTimeoutMinutes = 10,
     [int]$PingSeconds = 30,
     [switch]$LogEvents,
     [string]$EventLogPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\hooks.jsonl"),
@@ -446,6 +454,7 @@ function Get-Session([string]$id) {
     if (-not $script:sessions.ContainsKey($id)) {
         $script:sessions[$id] = @{
             id = $id; state = 'idle'; subagents = 0; last = (Get-Date); first = (Get-Date); transcript = $null; root = $null; project = $null
+            beforeCompact = 'idle'   # the state a compaction interrupted, restored when it ends
             pid = 0; tools = @{}; seeded = $false; dead = $false; short = $id.Substring(0, [Math]::Min(8, $id.Length))
         }
     }
@@ -524,6 +533,11 @@ function Expire-Sessions {
             $script:sessions.Remove($id)
             Log "session ${id}: dropped, its Claude Code process (pid $($s.pid)) is gone"
             continue
+        }
+        # A compaction whose end never arrived (it takes one to three minutes)
+        if ($s.state -eq 'compacting' -and $s.last -lt $now.AddMinutes(-$CompactTimeoutMinutes)) {
+            $s.state = $s.beforeCompact
+            Log "session ${id}: compacting for $CompactTimeoutMinutes min without events, back to $($s.state)"
         }
         if ($s.pid -le 0 -and $s.state -in 'processing', 'compacting' -and $s.transcript -and $s.last -lt $dead) {
             $stale = $false
@@ -759,8 +773,22 @@ function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
         $s = Get-Session $sid
         switch ($cmd) {
             'subagent_start' { $s.subagents++ }
-            'subagent_stop'  { if ($s.subagents -gt 0) { $s.subagents-- } }
-            default          { $s.state = $cmd }
+            'subagent_stop'  {
+                if ($s.subagents -gt 0) {
+                    $s.subagents--
+                } elseif ($s.state -eq 'compacting') {
+                    # The compaction runs as a subagent that stops without having
+                    # started: its stop is the end of the compaction. On a session
+                    # left idle (Claude Code compacts it 54 min after Stop, before
+                    # the prompt cache expires) PostCompact only comes with the
+                    # next prompt, hours later, so this is the only end signal
+                    $s.state = $s.beforeCompact
+                }
+            }
+            default {
+                if ($cmd -eq 'compacting' -and $s.state -ne 'compacting') { $s.beforeCompact = $s.state }
+                $s.state = $cmd
+            }
         }
         # Any activity from a session that was waiting means the permission went through
         if ($cmd -in 'subagent_start', 'subagent_stop' -and $s.state -eq 'waiting_user') { $s.state = 'processing' }
@@ -1497,10 +1525,14 @@ try {
             if (Send-Serial 'ping') { $script:lastPing = $now }
         }
         # A device that was still booting when the port opened (the Tab5
-        # takes ~2.5 s to bring its panel up) answered nothing: ask again
+        # takes ~2.5 s to bring its panel up) answered nothing: ask again.
+        # Also the first question after the daemon starts. Once it answers,
+        # push everything from session_clear on: its tiles may be from an
+        # earlier daemon (sessions that ended meanwhile) or a demo.
         if ($script:serial -and -not $script:deviceInfo -and ($now - $script:lastInfoTry).TotalSeconds -ge 10) {
             $script:lastInfoTry = $now
             Read-DeviceInfo | Out-Null
+            if ($script:deviceInfo) { Sync-Device $true }
         }
         foreach ($line in (Read-SerialLines)) {
             if ($line -match 'STATUS|VERSION|ERROR') { Log "device: $($line.Trim())" }
@@ -1520,9 +1552,8 @@ try {
             Update-DesktopToasts
         }
         if (($now - $lastHousekeeping).TotalSeconds -ge 60) {
-            $before = $script:sessions.Count
             Expire-Sessions
-            if ($script:sessions.Count -ne $before) { Sync-Device }
+            Sync-Device   # sends only what changed: a session gone, a compaction given up
             Update-ProjectNames
             $lastHousekeeping = $now
         }

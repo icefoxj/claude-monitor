@@ -22,7 +22,7 @@ Every state is one icon, chosen so that it reads from a distance: shape and colo
 | ![processing](docs/images/icon-processing.png) | **Processing** (`processing`) | Claude is working on your request: thinking, reading, writing. The gear spins. | `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`, `PostCompact` (auto), `Notification` `quota_auto_resume_fired` |
 | ![subagents](docs/images/icon-subagents.png) | **Processing with subagents** | The gear shrinks and gains a counter-rotating satellite while one or more subagents run under this session. The count resets when the turn ends. | `SubagentStart` / `SubagentStop` |
 | ![tool](docs/images/icon-tool.png) | **External tool running** (EXT badge) | A process started by a tool is alive right now: a build, a test run, a shell command, as opposed to the model thinking. The daemon sees the process appear, which is also how it knows you approved a permission. | the daemon's process watching (`tool_start` / `tool_stop`) |
-| ![compacting](docs/images/icon-compacting.png) | **Compacting** (`compacting`) | Claude Code is compacting the context; back in a moment. Grey, spinning. | `PreCompact` |
+| ![compacting](docs/images/icon-compacting.png) | **Compacting** (`compacting`) | Claude Code is compacting the context; back in a moment. Grey, spinning. | `PreCompact`; ends at the compaction's `SubagentStop` or `PostCompact` |
 | ![waiting](docs/images/icon-waiting.png) | **Waiting for you** (`waiting_user`) | A permission prompt is on the terminal, or a usage-limit resume needs Enter. Pulses three times when it appears; the Tab5 plays a rising two-tone beep. | `Notification` `permission_prompt`, `quota_auto_resume_stale` |
 | ![question](docs/images/icon-question.png) | **Question** (`question`) | Claude asked you something (`AskUserQuestion`), or an MCP server or a background agent needs your input. Pulses. | `PreToolUse` `AskUserQuestion`, `Notification` `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` |
 | ![error](docs/images/icon-error.png) | **Error** (`error`) | The turn ended with an API error: authentication, billing, server, … Look at the terminal. Pulses; the Tab5 plays a falling beep. | `StopFailure` (every type but `rate_limit`), `Notification` `quota_auto_resume_disabled` |
@@ -307,9 +307,9 @@ The mapping the daemon applies:
 | `Stop` | | `idle` | |
 | `StopFailure` | `error_type` = `rate_limit` | `paused` | usage limit hit; Claude Code will wait for the reset |
 | `StopFailure` | every other error type | `error` | authentication, billing, server errors, … |
-| `PreCompact` | | `compacting` | |
-| `PostCompact` | `trigger` = `auto` / `manual` | `processing` / `idle` | auto-compaction happens mid-turn; `/compact` between turns |
-| `SubagentStart` / `SubagentStop` | | count ± 1 | |
+| `PreCompact` | | `compacting` | the state it interrupted is kept for when it ends |
+| `PostCompact` | `trigger` = `auto` / `manual` | `processing` / `idle` | auto-compaction happens mid-turn; `/compact` between turns. A session left idle is also compacted, 54 minutes after its `Stop` (before the prompt cache expires), and then `PostCompact` only comes with the next prompt |
+| `SubagentStart` / `SubagentStop` | | count ± 1 | a `SubagentStop` with no subagent counted, while compacting, is the compaction's own subagent finishing (it never sends `SubagentStart`): back to the state before `PreCompact`, the green check for a session left idle. Ten minutes compacting with no event ends it too |
 | `SessionEnd` | | session removed; `off` when it was the last one | |
 
 Two caveats. First, there is no hook event for the moment you *approve* a permission; the daemon infers it from the tool's process (see [The host daemon](#the-host-daemon)), and in the no-daemon variant the red sign stays until the approved tool finishes (`PostToolUse`). Second, Claude Code rewrites `settings.json` itself, for example when it records a newly allowed directory or permission, and a block added by hand while a session was running can be lost in that rewrite; if a hook you added has vanished, re-add it and it sticks.
@@ -359,7 +359,7 @@ Each event can instead run `Send-ClaudeState.ps1` (Windows) or an `echo` (Linux/
 }
 ```
 
-On Linux/macOS the command is `echo <state> > /dev/ttyACM0 2>/dev/null || true` (put the port in raw mode once with `stty` as in the manual test). The `|| true` / unconditional `exit 0` is the important part: in Claude Code, a hook exiting with code 2 **blocks** the action. A loose cable must never turn into a Claude Code that refuses to work. In this mode there is no per-session tracking, no approval detection and no Tab5 tiles: the last event from any session wins.
+On Linux/macOS the command is `echo <state> > /dev/ttyACM0 2>/dev/null || true` (put the port in raw mode once with `stty` as in the manual test). The `|| true` / unconditional `exit 0` is the important part: in Claude Code, a hook exiting with code 2 **blocks** the action. A loose cable must never turn into a Claude Code that refuses to work. In this mode there is no per-session tracking, no approval detection and no Tab5 tiles: the last event from any session wins. A session that Claude Code compacts while it sits idle also keeps the grey gear until its next prompt: telling the compaction's own `SubagentStop` from a subagent's takes the per-session state the daemon keeps.
 
 ## Calibrating auto-rotation
 
