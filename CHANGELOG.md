@@ -4,8 +4,14 @@ Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub rel
 
 ## Unreleased
 
+### Added
+
+- The Tab5's usage page: a tap on the usage tile opens it, a tap goes back. Every limit at full size with a tick where an even pace would be, its reset as a clock time and where it ends up at the reset at the current pace (or when it runs out); the week as a chart, hour by hour, with the even-pace line and the projection; Claude Code's share of the weekly limit per project, this week and today, estimated from the token counts in Claude Code's transcripts; the plan and its extra usage. Protocol 8: the `usage` line carries `now=`, `windows=`, `plan=`, `extra=`, `history=` and `project=` (older boards skip them), and `view usage` opens the page.
+- Daemon: the weekly limit's readings are kept in `usage-history.jsonl` (seeded from the log the first time), the account's profile is read every six hours for the plan, the extra usage comes from the usage poll, and a C# helper reads Claude Code's transcripts incrementally for the usage by project (`-NoProjectUsage` turns it off). `GET /usage` shows all of it.
+
 ### Fixed
 
+- Tiles named after a subfolder (`memory`, `src`, ...) instead of the project. The `X-Claude-Project` header the hooks send arrives empty, so the daemon named a session after the `cwd` of the first event it saw, which follows the shell's `cd`: right when that was the session's start, wrong for every session already running when the daemon restarted. It now reads where the session started from the first `cwd` in its transcript.
 - A session left idle no longer keeps the grey gear for hours. Claude Code now compacts a session that sat idle (54 minutes after its last answer, before the prompt cache expires), and sends the end of that compaction (`PostCompact`) only with the next prompt, so its tile showed "compacting" until you used it again. The daemon now ends a compaction when the subagent that runs it stops (it is the one `SubagentStop` without a matching `SubagentStart`) and puts the session back where it was: the green check for an idle session, the gear for a turn in progress. A compaction that sends nothing for ten minutes (`-CompactTimeoutMinutes`) ends the same way. Without the daemon the grey gear still stays until the next prompt.
 - A daemon that starts (at logon, after a restart of its task) while the Tab5 is already running now clears the board's tiles before sending its own sessions, as it already did after reopening the port. Before, it only cleared them on a reconnect, so the tiles of sessions that ended while no daemon ran (or of a demo) stayed on screen next to the live ones until the board was reset. The same holds for a board that was still booting when the port opened and answered `version` only on a later try.
 

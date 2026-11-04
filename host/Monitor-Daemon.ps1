@@ -45,7 +45,8 @@
     line to a device whose VERSION lists "events" in features= (the Tab5's
     hook inspector); the AtomS3R never receives them. The line also names
     the session's project: the hooks send the X-Claude-Project header
-    (${CLAUDE_PROJECT_DIR}); its folder name is used unless ProjectsPath
+    (${CLAUDE_PROJECT_DIR}), else the first cwd in the session's
+    transcript is taken; its folder name is used unless ProjectsPath
     (projects.json, { "root": "name" }) maps it to a nicer one. The last 50 are kept
     for GET /events, and with -LogEvents each raw payload is appended as
     one JSON line to EventLogPath (prompts and tool inputs included: mind
@@ -60,6 +61,16 @@
     /usage itself reads, polled every UsagePollSeconds with the access token
     Claude Code keeps in CredentialsPath. That endpoint is undocumented and
     may change; the token is only sent to api.anthropic.com, never logged.
+
+    The same line carries what the Tab5's usage page shows (a tap on its
+    usage tile): the host's clock and each limit's window, for the pace and
+    the reset times; the plan (from the login, then the account's profile,
+    read every six hours) and its extra usage; the week so far, hour by
+    hour, from the readings kept in UsageHistoryPath (a line per change,
+    else one an hour; seeded from the log the first time); and Claude Code's
+    share of the weekly limit per project, estimated from the token counts
+    in Claude Code's own transcripts (TranscriptsPath, read incrementally
+    by a C# helper, a minute apart; -NoProjectUsage turns that off).
 
     The Claude desktop app's Code tab fires the same hooks as the CLI, but
     Cowork and the app's scheduled tasks fire none: the app tells you
@@ -76,7 +87,8 @@
     Endpoints (all on http://localhost:<HttpPort>/):
       POST /hook            Claude Code hook input JSON (any event)
       POST /statusline      Claude Code status line input JSON; answers with the text to show
-      GET  /usage           the plan usage last read, where from, and the polling state
+      GET  /usage           the plan usage last read, where from, the polling state, plan, extra
+                            usage, the week's readings and the usage by project
       GET  /events[?n=20]   the last hook events as the device sees them (tag, line, time)
       POST /state/<state>   write one state straight to the device (tests)
       GET  /serial/<cmd>    write any protocol word; for "status" / "version" returns the reply
@@ -106,6 +118,9 @@ param(
     [switch]$AccountUsage,            # poll the plan usage the way /usage does, with Claude Code's login
     [int]$UsagePollSeconds = 300,
     [string]$CredentialsPath = (Join-Path (Join-Path $HOME '.claude') '.credentials.json'),
+    [string]$UsageHistoryPath = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "claude-monitor\usage-history.jsonl"),
+    [string]$TranscriptsPath = (Join-Path (Join-Path $HOME '.claude') 'projects'),
+    [switch]$NoProjectUsage,          # do not read the transcripts for the usage by project
     [switch]$DesktopNotifications,    # show the Claude desktop app's notifications (Cowork, scheduled tasks) as a session
     [int]$DesktopWaitMinutes = 30,
     [int]$DesktopLingerMinutes = 10
@@ -248,7 +263,8 @@ function Read-DeviceInfo {
 #
 # The project a session belongs to comes from the X-Claude-Project header
 # the hooks send (${CLAUDE_PROJECT_DIR}, the root where the session
-# started); without the header, the cwd of the first event seen. The name
+# started); without the header, the first cwd in the session's transcript,
+# else the cwd of the first event seen. The name
 # shown is the root's folder name unless projects.json maps the root to a
 # nicer one: { "E:\\work\\claude-monitor": "Monitor" }.
 
@@ -284,6 +300,28 @@ function Get-ProjectName([string]$root) {
     $key = ConvertTo-RootKey $root
     if ($script:projectNames.ContainsKey($key)) { return $script:projectNames[$key] }
     return Split-Path -Leaf ($root -replace '[\\/]+$', '')
+}
+
+# Where a session was started: the first cwd in its transcript (the one the
+# transcript reader also takes as the project). Read once, when a session
+# is first seen without the header; the start of the file is enough.
+function Get-TranscriptRoot([string]$path) {
+    if (-not $path) { return $null }
+    try {
+        $fs = [IO.FileStream]::new($path, 'Open', 'Read', [IO.FileShare]'ReadWrite, Delete')
+        try {
+            $buf = [byte[]]::new(1MB)
+            $n = 0
+            while ($n -lt $buf.Length) {
+                $r = $fs.Read($buf, $n, $buf.Length - $n)
+                if ($r -le 0) { break }
+                $n += $r
+            }
+        } finally { $fs.Dispose() }
+        $m = [regex]::Match([Text.Encoding]::UTF8.GetString($buf, 0, $n), '"cwd":"((?:[^"\\]|\\.)*)"')
+        if ($m.Success) { return [string](ConvertFrom-Json ('"' + $m.Groups[1].Value + '"')) }
+    } catch {}
+    return $null
 }
 
 # ---------------- Claude Code processes ----------------
@@ -744,12 +782,19 @@ function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
     $tag = if ($detail) { "$($e.hook_event_name)/$detail" } else { [string]$e.hook_event_name }
 
     # The project: the header (the session's root) wins; else what the
-    # session already had; else the cwd of this first event
+    # session already had; else where its transcript starts; else the cwd
+    # of this first event (a session first seen mid-way, after a daemon
+    # restart, may have cd'd into a subfolder)
     $known = if ($script:sessions.ContainsKey($sid)) { $script:sessions[$sid] } else { $null }
+    $rootFrom = 'header'
     $root = if ($rootHeader) { $rootHeader }
-            elseif ($known -and $known.root) { $known.root }
-            elseif ($e.cwd) { [string]$e.cwd }
+            elseif ($known -and $known.root) { $rootFrom = 'known'; $known.root }
             else { $null }
+    if (-not $root) {
+        $rootFrom = 'transcript'
+        $root = Get-TranscriptRoot ([string]$e.transcript_path)
+        if (-not $root -and $e.cwd) { $rootFrom = 'cwd'; $root = [string]$e.cwd }
+    }
     $project = Get-ProjectName $root
 
     # Every event goes to the inspector, the ring and the JSON log, mapped or
@@ -770,6 +815,7 @@ function Process-Hook($e, [string]$rootHeader, [int]$clientPid) {
         $eventSent = $true
         $script:sessions.Remove($sid)
     } else {
+        if (-not $known) { Log "session ${short}: root $root (from $rootFrom)" }
         $s = Get-Session $sid
         switch ($cmd) {
             'subagent_start' { $s.subagents++ }
@@ -829,6 +875,12 @@ $script:usageHttp      = $null
 $script:usageCheckAt   = [datetime]::MinValue
 $script:deviceUsageKey = $null                   # what the device last got
 $script:deviceUsageAt  = [datetime]::MinValue
+$script:usagePlan      = $null                   # @{ name; status; since (DateTimeOffset or $null) }
+$script:usageExtra     = $null                   # @{ state = on|off|full; used; limit; currency }
+$script:profileTask    = $null                   # the profile request in flight
+$script:profileNextPoll = [datetime]::MinValue
+$script:usageHistory   = [System.Collections.Generic.List[object]]::new()   # the weekly limit's readings: @{ t; p; r }
+$script:usageProjects  = @()                     # @{ name; week; today; tokens }, week and today in % of the weekly limit
 
 function Set-UsageNote([string]$note) {
     if ($note -ne $script:usageNote) { Log "usage: $note" }
@@ -842,6 +894,29 @@ function Get-UsageLabel([string]$kind, [string]$model) {
         'weekly_scoped' { if ($model) { return "This week ($model)" } else { return 'This week (scoped)' } }
         default         { return ($kind -replace '_', ' ') }
     }
+}
+
+# Each limit's window, for the pace on the usage page
+function Get-UsageWindow([string]$kind) {
+    switch ($kind) {
+        'session' { return 5 * 3600 }
+        { $_ -like 'weekly*' } { return 7 * 24 * 3600 }
+        default   { return 0 }
+    }
+}
+
+# "Max 5x", "Pro": the login's subscriptionType / rateLimitTier, or the
+# profile's organization_type / rate_limit_tier
+function Get-PlanName([string]$type, [string]$tier) {
+    if ($tier -match 'max_(\d+x)') { return "Max $($Matches[1])" }
+    switch -Regex ($type) {
+        'max'        { return 'Max' }
+        'pro'        { return 'Pro' }
+        'team'       { return 'Team' }
+        'enterprise' { return 'Enterprise' }
+    }
+    if ($type) { return (Get-Culture).TextInfo.ToTitleCase((($type -replace '^claude_', '') -replace '_', ' ')) }
+    return $null
 }
 
 # A reset time as the sources give it: ISO 8601 (ConvertFrom-Json may have
@@ -863,14 +938,15 @@ function Set-UsageFromAccount($j) {
             $model = [string]$l.scope.model.display_name
             $key = if ($model) { "$($l.kind):$model" } else { [string]$l.kind }
             $next[$key] = @{ label = (Get-UsageLabel $l.kind $model); percent = [double]$l.percent
-                             resetsAt = (ConvertTo-ResetTime $l.resets_at); severity = [string]$l.severity }
+                             resetsAt = (ConvertTo-ResetTime $l.resets_at); severity = [string]$l.severity
+                             window = (Get-UsageWindow $l.kind) }
         }
     } else {
         foreach ($p in @(@('five_hour', 'session'), @('seven_day', 'weekly_all'))) {
             $w = $j.($p[0])
             if ($w -and $null -ne $w.utilization) {
                 $next[$p[1]] = @{ label = (Get-UsageLabel $p[1] ''); percent = [double]$w.utilization
-                                  resetsAt = (ConvertTo-ResetTime $w.resets_at); severity = '' }
+                                  resetsAt = (ConvertTo-ResetTime $w.resets_at); severity = ''; window = (Get-UsageWindow $p[1]) }
             }
         }
     }
@@ -879,12 +955,44 @@ function Set-UsageFromAccount($j) {
     # How the week divides between the apps (Claude Code, chats, Cowork)
     $script:usageSplit = @(foreach ($r in @($j.seven_day_breakdown.rows)) {
         if ($r -and $null -ne $r.percent -and [double]$r.percent -gt 0) {
-            @{ label = [string]$(if ($r.display_name) { $r.display_name } else { $r.key }); percent = [double]$r.percent }
+            @{ key = [string]$r.key; label = [string]$(if ($r.display_name) { $r.display_name } else { $r.key }); percent = [double]$r.percent }
         }
     })
+    $script:usageExtra = Get-ExtraUsage $j
     $script:usageSource = 'account'
     $script:usageAt = Get-Date
+    Add-UsageReading
     return $true
+}
+
+# The extra usage the plan can buy past its limits, from "spend" (amounts
+# in minor units with their exponent), else the older "extra_usage". Only
+# the disabled form has been seen so far; the enabled one is read by the
+# same field names
+function Get-ExtraUsage($j) {
+    $sp = $j.spend
+    $eu = $j.extra_usage
+    if (-not $sp -and -not $eu) { return $null }
+    $enabled = if ($sp -and $null -ne $sp.enabled) { [bool]$sp.enabled } else { [bool]$eu.is_enabled }
+    if (-not $enabled) { return @{ state = 'off' } }
+    $inv = [cultureinfo]::InvariantCulture
+    $currency = 'USD'
+    $used = $null
+    $limit = $null
+    if ($sp -and $sp.used -and $null -ne $sp.used.amount_minor) {
+        if ($sp.used.currency) { $currency = [string]$sp.used.currency }
+        $used = [double]$sp.used.amount_minor / [Math]::Pow(10, [int]$sp.used.exponent)
+        if ($sp.limit -and $null -ne $sp.limit.amount_minor) { $limit = [double]$sp.limit.amount_minor / [Math]::Pow(10, [int]$sp.limit.exponent) }
+    } elseif ($eu) {
+        $dp = if ($null -ne $eu.decimal_places) { [int]$eu.decimal_places } else { 2 }
+        if ($eu.currency) { $currency = [string]$eu.currency }
+        if ($null -ne $eu.used_credits) { $used = [double]$eu.used_credits / [Math]::Pow(10, $dp) }
+        if ($null -ne $eu.monthly_limit) { $limit = [double]$eu.monthly_limit / [Math]::Pow(10, $dp) }
+    }
+    $full = ($sp -and $sp.severity -eq 'critical') -or ($eu -and [bool]$eu.spend_limit_reached)
+    return @{ state = $(if ($full) { 'full' } else { 'on' }); currency = $currency
+              used  = $(if ($null -ne $used) { $used.ToString('0.00', $inv) } else { '0.00' })
+              limit = $(if ($null -ne $limit) { $limit.ToString('0.00', $inv) } else { '-' }) }
 }
 
 # The status line's rate_limits: the session and the week only, so the
@@ -895,14 +1003,101 @@ function Set-UsageFromStatusLine($rl) {
         $w = $rl.($p[0])
         if (-not $w -or $null -eq $w.used_percentage) { continue }
         $script:usage[$p[1]] = @{ label = (Get-UsageLabel $p[1] ''); percent = [double]$w.used_percentage
-                                  resetsAt = (ConvertTo-ResetTime $w.resets_at); severity = '' }
+                                  resetsAt = (ConvertTo-ResetTime $w.resets_at); severity = ''; window = (Get-UsageWindow $p[1]) }
         $any = $true
     }
     if ($any) {
         $script:usageSource = 'statusline'
         $script:usageAt = Get-Date
+        Add-UsageReading
     }
     return $any
+}
+
+# ---------------- the week's readings, for the chart on the usage page ----------------
+
+# One JSON line per reading of the weekly limit in UsageHistoryPath: t (when
+# read), p (percent), r (that window's reset); 35 days are kept
+function Initialize-UsageHistory {
+    $cut = [DateTimeOffset]::Now.AddDays(-35)
+    if (-not (Test-Path -LiteralPath $UsageHistoryPath)) {
+        Import-UsageHistoryFromLog
+        return
+    }
+    $dropped = 0
+    foreach ($line in [IO.File]::ReadLines($UsageHistoryPath)) {
+        try { $o = $line | ConvertFrom-Json } catch { $dropped++; continue }
+        $t = ConvertTo-ResetTime $o.t
+        if (-not $t -or $t -lt $cut) { $dropped++; continue }
+        $script:usageHistory.Add(@{ t = $t; p = [double]$o.p; r = (ConvertTo-ResetTime $o.r) })
+    }
+    if ($dropped) { Save-UsageHistory }
+    Log "usage: $($script:usageHistory.Count) readings of the week in $UsageHistoryPath"
+}
+
+function ConvertTo-HistoryLine($e) {
+    return ([ordered]@{ t = $e.t.ToString('o'); p = $e.p; r = $(if ($e.r) { $e.r.ToString('o') } else { $null }) } | ConvertTo-Json -Compress)
+}
+
+function Save-UsageHistory {
+    try {
+        [IO.File]::WriteAllLines($UsageHistoryPath, [string[]]@($script:usageHistory | ForEach-Object { ConvertTo-HistoryLine $_ }))
+    } catch { Log "usage: cannot write ${UsageHistoryPath}: $($_.Exception.Message)" }
+}
+
+# The first time: the usage lines the log recorded (each change is logged
+# as "device <- usage ... limit=This week|<percent>|<resets in s>|...")
+function Import-UsageHistoryFromLog {
+    $inv = [cultureinfo]::InvariantCulture
+    foreach ($f in @("$LogPath.1", $LogPath)) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        foreach ($m in (Select-String -LiteralPath $f -Pattern '^(\S+ \S+) device <- usage \S+ age=(\d+).*? limit=This week\|([\d.]+)\|(-?\d+)\|')) {
+            $g = $m.Matches[0].Groups
+            try { $at = [DateTimeOffset]::new([datetime]::ParseExact($g[1].Value, 'yyyy-MM-dd HH:mm:ss.fff', $inv)) } catch { continue }
+            $reset = [int]$g[4].Value
+            $script:usageHistory.Add(@{ t = $at.AddSeconds(-[int]$g[2].Value); p = [double]::Parse($g[3].Value, $inv)
+                                        r = $(if ($reset -ge 0) { $at.AddSeconds($reset) } else { $null }) })
+        }
+    }
+    Save-UsageHistory
+    Log "usage: $($script:usageHistory.Count) readings of the week taken from the log into $UsageHistoryPath"
+}
+
+# Keeps the weekly limit's reading: when it changed, or an hour after the last one
+function Add-UsageReading {
+    $w = $script:usage['weekly_all']
+    if (-not $w -or -not $w.resetsAt) { return }
+    $now = [DateTimeOffset]::Now
+    $n = $script:usageHistory.Count
+    $last = if ($n) { $script:usageHistory[$n - 1] } else { $null }
+    if ($last -and $last.p -eq $w.percent -and ($now - $last.t).TotalMinutes -lt 60) { return }
+    $e = @{ t = $now; p = [double]$w.percent; r = $w.resetsAt }
+    $script:usageHistory.Add($e)
+    while ($script:usageHistory.Count -and $script:usageHistory[0].t -lt $now.AddDays(-35)) { $script:usageHistory.RemoveAt(0) }
+    try { Add-Content -LiteralPath $UsageHistoryPath -Value (ConvertTo-HistoryLine $e) -Encoding utf8 } catch {}
+}
+
+# The weekly limit's percentage at every hour of its window so far: the
+# last reading of that window before each hour, if it is at most three
+# hours older ("" otherwise; the board draws a straight line over gaps).
+# "<start>|3600|0,4,4,,9,..."
+function Format-UsageHistory {
+    $w = $script:usage['weekly_all']
+    if (-not $w -or -not $w.resetsAt) { return $null }
+    $start = $w.resetsAt.AddDays(-7)
+    $now = [DateTimeOffset]::Now
+    $mine = @($script:usageHistory | Where-Object { $_.r -and [Math]::Abs(($_.r - $w.resetsAt).TotalMinutes) -lt 90 -and $_.t -ge $start } |
+              Sort-Object { $_.t })
+    $values = [System.Collections.Generic.List[string]]::new()
+    $values.Add('0')
+    $i = 0
+    $last = $null
+    for ($k = 1; $start.AddHours($k) -le $now -and $k -lt 200; $k++) {
+        $tk = $start.AddHours($k)
+        while ($i -lt $mine.Count -and $mine[$i].t -le $tk) { $last = $mine[$i]; $i++ }
+        if ($last -and ($tk - $last.t).TotalHours -le 3) { $values.Add([string][int][Math]::Round($last.p)) } else { $values.Add('') }
+    }
+    return '{0}|3600|{1}' -f $start.ToUnixTimeSeconds(), ($values -join ',')
 }
 
 # "usage <source>\tage=<s>\tlimit=<label>|<percent>|<resets in s>|<severity>..."
@@ -924,6 +1119,23 @@ function Format-UsageLine {
             [string]::Format($inv, '{0}:{1:0.#}', ($_.label -replace '[\t|:]', ' '), $_.percent)
         }) -join '|')
     }
+    # For the usage page (protocol 8; older boards skip these fields)
+    $parts += 'now={0}|{1}' -f $now.ToUnixTimeSeconds(), [int]$now.Offset.TotalSeconds
+    $parts += 'windows=' + (@($script:usage.Values | ForEach-Object { [int]$_.window }) -join '|')
+    $pl = $script:usagePlan
+    if ($pl -and $pl.name) {
+        $since = if ($pl.since) { $pl.since.ToUnixTimeSeconds() } else { '' }
+        $parts += 'plan={0}|{1}|{2}' -f ($pl.name -replace '[\t|]', ' '), $pl.status, $since
+    }
+    $x = $script:usageExtra
+    if ($x) {
+        $parts += $(if ($x.state -eq 'off') { 'extra=off' } else { 'extra={0}|{1}|{2}|{3}' -f $x.state, $x.used, $x.limit, $x.currency })
+    }
+    $h = Format-UsageHistory
+    if ($h) { $parts += "history=$h" }
+    foreach ($pr in $script:usageProjects) {
+        $parts += 'project=' + [string]::Format($inv, '{0}|{1:0.#}|{2:0.#}', ($pr.name -replace '[\t|]', ' '), $pr.week, $pr.today)
+    }
     return ($parts -join "`t")
 }
 
@@ -942,46 +1154,96 @@ function Send-Usage([bool]$force = $false) {
     $key = "$($script:usageSource)|" + (@($script:usage.Values | ForEach-Object {
         $min = if ($_.resetsAt) { [int]($_.resetsAt.ToUnixTimeSeconds() / 60) } else { '-' }
         [string]::Format($inv, '{0}={1:0.#}@{2}', $_.label, $_.percent, $min)
-    }) -join ';') + '|' + (@($script:usageSplit | ForEach-Object { "$($_.label)=$($_.percent)" }) -join ';')
+    }) -join ';') + '|' + (@($script:usageSplit | ForEach-Object { "$($_.label)=$($_.percent)" }) -join ';') +
+        '|' + $(if ($script:usagePlan) { "$($script:usagePlan.name) $($script:usagePlan.status)" }) +
+        '|' + $(if ($script:usageExtra) { "$($script:usageExtra.state) $($script:usageExtra.used) $($script:usageExtra.limit)" }) +
+        '|' + (Format-UsageHistory) +
+        '|' + (@($script:usageProjects | ForEach-Object { [string]::Format($inv, '{0}={1:0}/{2:0}', $_.name, $_.week, $_.today) }) -join ';')
     $changed = $key -ne $script:deviceUsageKey
     $refresh = $script:usageAt -gt $script:deviceUsageAt -and ((Get-Date) - $script:deviceUsageAt).TotalSeconds -ge 300
     if (-not ($force -or $changed -or $refresh)) { return }
     $line = Format-UsageLine
     if (Send-Serial $line) {
-        if ($force -or $changed) { Log "device <- $($line -replace "`t", ' ')" }
+        if ($force -or $changed) { Log "device <- $(($line -replace 'history=[^\t]*', 'history=...') -replace "`t", ' ')" }
         $script:deviceUsageKey = $key
         $script:deviceUsageAt = Get-Date
     }
 }
 
-# Starts one poll of the endpoint /usage reads, without waiting for it: the
-# main loop picks the answer up (Complete-UsagePoll)
-function Start-UsagePoll {
-    $script:usageNextPoll = (Get-Date).AddSeconds($UsagePollSeconds)
+# Claude Code's claude.ai login from CredentialsPath, or $null (and a note why)
+function Get-AccountLogin {
     try {
         $o = (Get-Content -LiteralPath $CredentialsPath -Raw -ErrorAction Stop | ConvertFrom-Json).claudeAiOauth
     } catch {
         Set-UsageNote "no Claude Code login in $CredentialsPath"
-        return
+        return $null
     }
-    if (-not $o -or -not $o.accessToken) { Set-UsageNote 'no claude.ai login in the credentials file'; return }
+    if (-not $o -or -not $o.accessToken) { Set-UsageNote 'no claude.ai login in the credentials file'; return $null }
     if ($o.expiresAt -and [DateTimeOffset]::FromUnixTimeMilliseconds([int64]$o.expiresAt) -lt [DateTimeOffset]::Now.AddMinutes(1)) {
         Set-UsageNote 'access token expired: waiting for Claude Code to refresh it'
         $script:usageNextPoll = (Get-Date).AddMinutes(2)
-        return
+        return $null
+    }
+    return $o
+}
+
+# A GET of an account endpoint Claude Code reads, with its login; returns the task
+function Send-AccountRequest([string]$path, $login) {
+    if (-not $script:usageHttp) {
+        $script:usageHttp = [System.Net.Http.HttpClient]::new()
+        $script:usageHttp.Timeout = [TimeSpan]::FromSeconds(15)
+    }
+    $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, "https://api.anthropic.com$path")
+    $req.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', [string]$login.accessToken)
+    $req.Headers.Add('anthropic-beta', 'oauth-2025-04-20')
+    $req.Headers.UserAgent.ParseAdd('claude-monitor')
+    return $script:usageHttp.SendAsync($req)
+}
+
+# Starts one poll of the endpoint /usage reads, without waiting for it: the
+# main loop picks the answer up (Complete-UsagePoll). Every six hours also
+# the account's profile, for the plan's status and start (Complete-ProfilePoll);
+# until it answers the plan's name comes from the login itself
+function Start-UsagePoll {
+    $script:usageNextPoll = (Get-Date).AddSeconds($UsagePollSeconds)
+    $o = Get-AccountLogin
+    if (-not $o) { return }
+    if (-not $script:usagePlan -or -not $script:usagePlan.status) {
+        $name = Get-PlanName ([string]$o.subscriptionType) ([string]$o.rateLimitTier)
+        if ($name) { $script:usagePlan = @{ name = $name; status = ''; since = $null } }
     }
     try {
-        if (-not $script:usageHttp) {
-            $script:usageHttp = [System.Net.Http.HttpClient]::new()
-            $script:usageHttp.Timeout = [TimeSpan]::FromSeconds(15)
+        $script:usageTask = Send-AccountRequest '/api/oauth/usage' $o
+        if (-not $script:profileTask -and (Get-Date) -ge $script:profileNextPoll) {
+            $script:profileNextPoll = (Get-Date).AddHours(6)
+            $script:profileTask = Send-AccountRequest '/api/oauth/profile' $o
         }
-        $req = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, 'https://api.anthropic.com/api/oauth/usage')
-        $req.Headers.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', [string]$o.accessToken)
-        $req.Headers.Add('anthropic-beta', 'oauth-2025-04-20')
-        $req.Headers.UserAgent.ParseAdd('claude-monitor')
-        $script:usageTask = $script:usageHttp.SendAsync($req)
     } catch {
         Set-UsageNote "poll failed: $($_.Exception.Message)"
+    }
+}
+
+function Complete-ProfilePoll {
+    $t = $script:profileTask
+    $script:profileTask = $null
+    if ($t.IsFaulted -or $t.IsCanceled) { $script:profileNextPoll = (Get-Date).AddMinutes(30); return }
+    $resp = $t.Result
+    try {
+        $code = [int]$resp.StatusCode
+        if ($code -ne 200) {
+            Log "usage: profile: HTTP $code"
+            $script:profileNextPoll = (Get-Date).AddMinutes($(if ($code -eq 429) { 60 } else { 30 }))
+            return
+        }
+        $org = ($resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json).organization
+        $name = Get-PlanName ([string]$org.organization_type) ([string]$org.rate_limit_tier)
+        if ($name) {
+            $script:usagePlan = @{ name = $name; status = [string]$org.subscription_status; since = (ConvertTo-ResetTime $org.subscription_created_at) }
+        }
+    } catch {
+        Log "usage: profile: $($_.Exception.Message)"
+    } finally {
+        $resp.Dispose()
     }
 }
 
@@ -1005,6 +1267,7 @@ function Complete-UsagePoll {
         $j = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
         if (Set-UsageFromAccount $j) {
             Set-UsageNote 'ok'
+            if (-not $script:transcriptTask) { Update-ProjectUsage }
             Send-Usage
         } else {
             Set-UsageNote 'no limits in the answer'
@@ -1027,7 +1290,292 @@ function Get-UsageObject {
                         resets_at = $(if ($_.Value.resetsAt) { $_.Value.resetsAt.ToString('o') } else { $null }); severity = $_.Value.severity }
         })
         week_by_app     = @($script:usageSplit | ForEach-Object { [ordered]@{ label = $_.label; percent = $_.percent } })
+        plan            = $(if ($script:usagePlan) { [ordered]@{ name = $script:usagePlan.name; status = $script:usagePlan.status
+                                                                  since = $(if ($script:usagePlan.since) { $script:usagePlan.since.ToString('yyyy-MM-dd') } else { $null }) } })
+        extra_usage     = $script:usageExtra
+        week_readings   = $script:usageHistory.Count
+        week_by_hour    = (Format-UsageHistory)
+        projects        = @($script:usageProjects | ForEach-Object { [ordered]@{ name = $_.name; week = [Math]::Round($_.week, 1); today = [Math]::Round($_.today, 1); tokens = $_.tokens } })
+        transcripts     = $script:transcriptNote
     }
+}
+
+# ---------------- Claude Code's transcripts -> usage by project ----------------
+#
+# The account splits the week by app (Claude Code, chats, Cowork), not by
+# project. Claude Code's transcripts have every message's token counts, so
+# the daemon weighs them per project (where the session started) and splits
+# Claude Code's part of the weekly limit in the same proportions; today's
+# part is the same weight since local midnight. An estimate: the limits are
+# not published in tokens.
+
+$script:transcriptOn     = $false
+$script:transcriptNote   = $(if ($NoProjectUsage) { 'off (-NoProjectUsage)' } else { 'not read yet' })
+$script:transcriptTask   = $null
+$script:transcriptNextAt = [datetime]::MinValue
+
+$TranscriptUsageSource = @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+// Claude Code's token use per project and hour, from its own transcripts:
+// <root>\<project dir>\<session>.jsonl (subagents in <session>\subagents\),
+// one JSON object per line, every assistant message with message.usage.
+// Read incrementally: a scan parses only what was appended since the last
+// one. A message written as several lines (one per content block) is
+// counted once, by message.id, at its largest usage.
+//
+// Tokens are weighted the way the API prices them relative to fresh input
+// (cache writes 1.25x for 5 min and 2x for 1 h, cache reads 0.1x, output
+// 5x; Sonnet 0.6x and Haiku 0.2x of Opus), so a project's share reads like
+// its share of the cost, which is what the plan limits follow; an estimate.
+public static class TranscriptUsage {
+    public class Row { public string Root; public string Folder; public double Week; public double Today; public long Tokens; }
+
+    class FileState { public long Offset; }
+    class Counted { public double Weight; public long Tokens; public long Hour; public string Folder; }
+    class Bucket { public double Weight; public long Tokens; }
+
+    static readonly object gate = new object();
+    static readonly Dictionary<string, FileState> files = new Dictionary<string, FileState>(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, Counted> messages = new Dictionary<string, Counted>();
+    static readonly Dictionary<string, Dictionary<long, Bucket>> hours = new Dictionary<string, Dictionary<long, Bucket>>(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, string> roots = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    static readonly byte[] assistantMark = Encoding.UTF8.GetBytes("\"type\":\"assistant\"");
+    static readonly byte[] cwdMark = Encoding.UTF8.GetBytes("\"cwd\":");
+
+    public static long BytesRead;
+    public static int FilesRead;
+    public static double LastScanMs;
+    public static string LastError;
+
+    public static Task ScanAsync(string root, int days) { return Task.Run(() => Scan(root, days)); }
+
+    public static void Scan(string root, int days) {
+        lock (gate) {
+            var sw = Stopwatch.StartNew();
+            DateTime cutoff = DateTime.UtcNow.AddDays(-days);
+            long minHour = new DateTimeOffset(cutoff).ToUnixTimeSeconds() / 3600;
+            FilesRead = 0;
+            if (Directory.Exists(root)) {
+                foreach (string path in Directory.EnumerateFiles(root, "*.jsonl", SearchOption.AllDirectories)) {
+                    var fi = new FileInfo(path);
+                    if (fi.LastWriteTimeUtc < cutoff) continue;
+                    FileState st;
+                    if (!files.TryGetValue(path, out st)) { st = new FileState(); files[path] = st; }
+                    if (fi.Length == st.Offset) continue;
+                    if (fi.Length < st.Offset) st.Offset = 0;   // rewritten
+                    string rel = Path.GetRelativePath(root, path);
+                    int sep = rel.IndexOfAny(new[] { '\\', '/' });
+                    if (sep <= 0) continue;
+                    string folder = rel.Substring(0, sep);
+                    bool main = rel.IndexOfAny(new[] { '\\', '/' }, sep + 1) < 0;   // the session's own file, not a subagent's
+                    try { ReadFile(path, st, folder, main, minHour); FilesRead++; }
+                    catch (Exception e) { LastError = Path.GetFileName(path) + ": " + e.Message; }
+                }
+            }
+            Prune(minHour);
+            LastScanMs = sw.Elapsed.TotalMilliseconds;
+        }
+    }
+
+    static void ReadFile(string path, FileState st, string folder, bool main, long minHour) {
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16)) {
+            fs.Position = st.Offset;
+            byte[] buf = new byte[1 << 22];
+            int filled = 0;
+            long consumed = st.Offset;
+            while (true) {
+                if (filled == buf.Length) Array.Resize(ref buf, buf.Length * 2);   // a line longer than the buffer
+                int n = fs.Read(buf, filled, buf.Length - filled);
+                if (n <= 0) break;
+                BytesRead += n;
+                int scanFrom = filled;
+                filled += n;
+                int start = 0;
+                while (true) {
+                    int nl = Array.IndexOf(buf, (byte)'\n', Math.Max(start, scanFrom), filled - Math.Max(start, scanFrom));
+                    if (nl < 0) break;
+                    Line(buf, start, nl - start, folder, main, minHour);
+                    start = nl + 1;
+                }
+                consumed += start;
+                Buffer.BlockCopy(buf, start, buf, 0, filled - start);
+                filled -= start;
+            }
+            st.Offset = consumed;   // a last line without its newline is read next time
+        }
+    }
+
+    static void Line(byte[] buf, int start, int len, string folder, bool main, long minHour) {
+        if (len < 2) return;
+        var span = new ReadOnlySpan<byte>(buf, start, len);
+        bool isAssistant = span.IndexOf(assistantMark) >= 0;
+        bool wantRoot = main && !roots.ContainsKey(folder) && span.IndexOf(cwdMark) >= 0;
+        if (!isAssistant && !wantRoot) return;
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(new ReadOnlyMemory<byte>(buf, start, len)); } catch { return; }
+        using (doc) {
+            JsonElement o = doc.RootElement;
+            if (o.ValueKind != JsonValueKind.Object) return;
+            JsonElement v;
+            if (wantRoot && o.TryGetProperty("cwd", out v) && v.ValueKind == JsonValueKind.String) {
+                roots[folder] = v.GetString();   // where the session was started: the project
+            }
+            if (!isAssistant) return;
+            if (!o.TryGetProperty("type", out v) || v.ValueKind != JsonValueKind.String || v.GetString() != "assistant") return;
+            JsonElement msg, usage;
+            if (!o.TryGetProperty("message", out msg) || msg.ValueKind != JsonValueKind.Object) return;
+            if (!msg.TryGetProperty("usage", out usage) || usage.ValueKind != JsonValueKind.Object) return;
+            if (!o.TryGetProperty("timestamp", out v) || v.ValueKind != JsonValueKind.String) return;
+            DateTimeOffset ts;
+            if (!DateTimeOffset.TryParse(v.GetString(), out ts)) return;
+            long hour = ts.ToUnixTimeSeconds() / 3600;
+            if (hour < minHour) return;
+            string model = msg.TryGetProperty("model", out v) && v.ValueKind == JsonValueKind.String ? v.GetString() : "";
+            if (model == "<synthetic>") return;
+            string id = msg.TryGetProperty("id", out v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+            double input = Num(usage, "input_tokens"), output = Num(usage, "output_tokens");
+            double read = Num(usage, "cache_read_input_tokens"), write = Num(usage, "cache_creation_input_tokens");
+            double w5 = write, w1 = 0;
+            JsonElement cc;
+            if (usage.TryGetProperty("cache_creation", out cc) && cc.ValueKind == JsonValueKind.Object) {
+                w5 = Num(cc, "ephemeral_5m_input_tokens");
+                w1 = Num(cc, "ephemeral_1h_input_tokens");
+                if (w5 + w1 == 0) w5 = write;
+            }
+            double weight = (input + 1.25 * w5 + 2.0 * w1 + 0.1 * read + 5.0 * output) * ModelFactor(model);
+            long tokens = (long)(input + output + read + write);
+
+            Counted c;
+            if (id != null && messages.TryGetValue(id, out c)) {
+                if (weight <= c.Weight) return;
+                Add(c.Folder, c.Hour, weight - c.Weight, tokens - c.Tokens);
+                c.Weight = weight;
+                c.Tokens = tokens;
+                return;
+            }
+            if (id != null) messages[id] = new Counted { Weight = weight, Tokens = tokens, Hour = hour, Folder = folder };
+            Add(folder, hour, weight, tokens);
+        }
+    }
+
+    static double Num(JsonElement o, string name) {
+        JsonElement v;
+        return o.TryGetProperty(name, out v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : 0;
+    }
+
+    static double ModelFactor(string model) {
+        if (model.IndexOf("haiku", StringComparison.OrdinalIgnoreCase) >= 0) return 0.2;
+        if (model.IndexOf("sonnet", StringComparison.OrdinalIgnoreCase) >= 0) return 0.6;
+        return 1.0;
+    }
+
+    static void Add(string folder, long hour, double weight, long tokens) {
+        Dictionary<long, Bucket> h;
+        if (!hours.TryGetValue(folder, out h)) { h = new Dictionary<long, Bucket>(); hours[folder] = h; }
+        Bucket b;
+        if (!h.TryGetValue(hour, out b)) { b = new Bucket(); h[hour] = b; }
+        b.Weight += weight;
+        b.Tokens += tokens;
+    }
+
+    static void Prune(long minHour) {
+        var old = new List<string>();
+        foreach (var kv in messages) if (kv.Value.Hour < minHour) old.Add(kv.Key);
+        foreach (string k in old) messages.Remove(k);
+        foreach (var h in hours.Values) {
+            var gone = new List<long>();
+            foreach (long k in h.Keys) if (k < minHour) gone.Add(k);
+            foreach (long k in gone) h.Remove(k);
+        }
+    }
+
+    // Each project's weighted use since `since` and since `today` (both UTC)
+    public static Row[] Totals(DateTime since, DateTime today) {
+        lock (gate) {
+            long sinceHour = new DateTimeOffset(since.ToUniversalTime()).ToUnixTimeSeconds() / 3600;
+            long todayHour = new DateTimeOffset(today.ToUniversalTime()).ToUnixTimeSeconds() / 3600;
+            var rows = new List<Row>();
+            foreach (var kv in hours) {
+                var r = new Row { Folder = kv.Key };
+                string root;
+                r.Root = roots.TryGetValue(kv.Key, out root) ? root : null;
+                foreach (var b in kv.Value) {
+                    if (b.Key >= sinceHour) { r.Week += b.Value.Weight; r.Tokens += b.Value.Tokens; }
+                    if (b.Key >= todayHour) r.Today += b.Value.Weight;
+                }
+                if (r.Week > 0) rows.Add(r);
+            }
+            return rows.ToArray();
+        }
+    }
+}
+'@
+
+function Initialize-TranscriptUsage {
+    if ($NoProjectUsage) { return }
+    try {
+        Add-Type -TypeDefinition $TranscriptUsageSource -ErrorAction Stop
+        $script:transcriptOn = $true
+        Log "projects: reading Claude Code's transcripts in $TranscriptsPath for the usage by project"
+    } catch {
+        $script:transcriptNote = "reader unavailable: $($_.Exception.Message)"
+        Log "projects: transcript reader unavailable: $($_.Exception.Message)"
+    }
+}
+
+# Shares of the weekly limit per project: the top five and the rest
+function Update-ProjectUsage {
+    if (-not $script:transcriptOn) { return }
+    $w = $script:usage['weekly_all']
+    if (-not $w -or -not $w.resetsAt) { $script:usageProjects = @(); return }
+    $rows = [TranscriptUsage]::Totals($w.resetsAt.AddDays(-7).UtcDateTime, [DateTimeOffset]::new((Get-Date).Date).UtcDateTime)
+    $by = @{}
+    $total = 0.0
+    foreach ($r in $rows) {
+        $name = if ($r.Root) { Get-ProjectName $r.Root } else { [string]$r.Folder }
+        if (-not $by.ContainsKey($name)) { $by[$name] = @{ name = $name; weight = 0.0; todayWeight = 0.0; tokens = [int64]0 } }
+        $by[$name].weight += $r.Week
+        $by[$name].todayWeight += $r.Today
+        $by[$name].tokens += $r.Tokens
+        $total += $r.Week
+    }
+    if ($total -le 0) { $script:usageProjects = @(); return }
+    # Claude Code's part of the weekly limit: the account's split, else all of it
+    $cc = $script:usageSplit | Where-Object { $_.key -eq 'claude_code' -or $_.label -eq 'Claude Code' } | Select-Object -First 1
+    $part = $w.percent * $(if ($cc) { $cc.percent / 100 } else { 1.0 }) / $total
+    $sorted = @($by.Values | Sort-Object { $_.weight } -Descending)
+    $list = [System.Collections.Generic.List[object]]::new()
+    foreach ($p in ($sorted | Select-Object -First 5)) {
+        $list.Add(@{ name = $p.name; week = $p.weight * $part; today = $p.todayWeight * $part; tokens = $p.tokens })
+    }
+    $rest = @($sorted | Select-Object -Skip 5)
+    if ($rest.Count) {
+        $o = @{ name = 'other'; week = 0.0; today = 0.0; tokens = [int64]0 }
+        foreach ($p in $rest) { $o.week += $p.weight * $part; $o.today += $p.todayWeight * $part; $o.tokens += $p.tokens }
+        $list.Add($o)
+    }
+    $script:usageProjects = $list.ToArray()
+}
+
+# The reader's scan finished (a minute apart, on a pool thread)
+function Complete-TranscriptScan {
+    $t = $script:transcriptTask
+    $script:transcriptTask = $null
+    if ($t.IsFaulted) {
+        $script:transcriptNote = "scan failed: $($t.Exception.GetBaseException().Message)"
+        return
+    }
+    $err = [TranscriptUsage]::LastError
+    $script:transcriptNote = '{0} files read in {1:0} ms{2}' -f [TranscriptUsage]::FilesRead, [TranscriptUsage]::LastScanMs, $(if ($err) { "; last error: $err" })
+    Update-ProjectUsage
 }
 
 # What the status line shows: model, context, and the two windows
@@ -1468,6 +2016,8 @@ try {
 Update-ProjectNames
 Initialize-ProcessSnapshots
 Initialize-DesktopWatch
+Initialize-UsageHistory
+Initialize-TranscriptUsage
 Open-Serial | Out-Null
 $task = $listener.GetContextAsync()
 $lastHousekeeping = Get-Date
@@ -1542,6 +2092,12 @@ try {
         # features late, a window that reset)
         if ($AccountUsage -and -not $script:usageTask -and $now -ge $script:usageNextPoll) { Start-UsagePoll }
         if ($script:usageTask -and $script:usageTask.IsCompleted) { Complete-UsagePoll }
+        if ($script:profileTask -and $script:profileTask.IsCompleted) { Complete-ProfilePoll }
+        if ($script:transcriptOn -and -not $script:transcriptTask -and $now -ge $script:transcriptNextAt) {
+            $script:transcriptNextAt = $now.AddSeconds(60)
+            $script:transcriptTask = [TranscriptUsage]::ScanAsync($TranscriptsPath, 8)
+        }
+        if ($script:transcriptTask -and $script:transcriptTask.IsCompleted) { Complete-TranscriptScan }
         if ($now -ge $script:usageCheckAt) {
             $script:usageCheckAt = $now.AddSeconds(5)
             Send-Usage

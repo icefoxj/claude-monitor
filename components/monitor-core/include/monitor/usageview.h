@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "monitor/usage.h"
 
@@ -20,9 +21,17 @@ namespace monitor {
 // vertically, over the colour `bg` (already filled by the caller): one per
 // limit, then, when the account sent it, one for the week by app (a bar in
 // one colour per app and a legend). `elapsedSec` is how long ago the usage
-// line arrived, for the countdowns.
+// line arrived, for the countdowns. `detailed` (the usage page): a tick on
+// each bar where an even pace would be, the reset as a clock time when the
+// host sent its clock, and where the usage ends up at the reset.
 void drawUsageRows(M5Canvas& canvas, int x, int y, int w, int h,
-                   const Usage& usage, int32_t elapsedSec, uint16_t bg);
+                   const Usage& usage, int32_t elapsedSec, uint16_t bg, bool detailed = false);
+
+// "12 min", "3 h 05 min", "2 d 4 h"
+void usageDurationText(int32_t sec, char* out, size_t size);
+
+// Green under 50 %, amber under 80 %, red above, or worse when the account says so
+uint16_t usageLevelColor(float percent, const std::string& severity);
 
 // Rows drawUsageRows draws for `usage`
 int usageRowCount(const Usage& usage);

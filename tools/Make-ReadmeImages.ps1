@@ -13,7 +13,8 @@
 
     -Quick skips the two captures that need real time to pass: the work ring
     (2.5 minutes of processing for a quarter lap) and the lost-host mark
-    (a minute of silence after a ping).
+    (a minute of silence after a ping). -Only takes the names of the
+    pictures to capture (tab5-usage, icon-error...) and skips the others.
 
 .EXAMPLE
     Stop-ScheduledTask "claude-monitor daemon"
@@ -23,7 +24,8 @@
 param(
     [string]$PortName = 'COM7',
     [string]$OutDir = (Join-Path $PSScriptRoot '..\docs\images'),
-    [switch]$Quick
+    [switch]$Quick,
+    [string[]]$Only
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,6 +39,7 @@ $icon = @(397, 117, 486, 486)
 $iconWidth = 240
 
 function Shot([string]$name, [string[]]$setup, [double]$wait, [int[]]$crop, [int]$width) {
+    if ($Only -and $name -notin $Only) { return }
     $out = Join-Path $OutDir "$name.png"
     Write-Host "-- $name"
     $args = @{ PortName = $PortName; OutFile = $out; Setup = $setup; Wait = $wait }
@@ -86,6 +89,19 @@ Shot 'tab5-detail'    ($events + 'view detail a1') 2 $null 0
 
 # ---- the screensaver, with the same made-up numbers ----
 Shot 'tab5-saver' @('view grid', 'ping', $usage, 'view saver') 2 $null 0
+
+# ---- the usage page: the same numbers on a Thursday at 14:00, with the
+# week so far (work hours only), a plan, extra usage and five projects ----
+$now = 1792072800                       # Thu 2026-10-15 14:00 UTC; the week reset is 3.5 days off
+$start = $now + 302400 - 604800
+$weights = foreach ($k in 0..84) { $h = (2 + $k) % 24; if ($h -ge 9 -and $h -lt 19) { 1.0 + 0.8 * [Math]::Sin($k * 1.7) } else { 0.0 } }
+$sum = ($weights | Measure-Object -Sum).Sum
+$v = 0.0
+$hours = foreach ($w in $weights) { $v += 63.0 * $w / $sum; [int][Math]::Round($v) }
+$page = $usage + "${t}now=$now|0${t}windows=18000|604800|604800${t}plan=Max 5x|active|1771200000${t}extra=on|12.40|50.00|USD" +
+        "${t}history=$start|3600|$($hours -join ',')" +
+        "${t}project=api|14.2|2.1${t}project=web|9.6|1.4${t}project=infra|5.1|0.6${t}project=docs|2.4|0${t}project=mobile|1.5|0.3"
+Shot 'tab5-usage' @('view grid', 'ping', $page, 'view usage') 2 $null 0
 
 # ---- leave the board as we found it ----
 $done = Join-Path $OutDir 'cleanup.png'

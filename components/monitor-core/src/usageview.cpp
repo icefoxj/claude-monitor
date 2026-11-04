@@ -48,20 +48,65 @@ const RowStyle kStyles[] = {
     { &fonts::DejaVu18, &fonts::DejaVu18, nullptr,           40,  0, 24, 10,  0,   0 },
 };
 
-uint16_t barColor(const UsageLimit& l){
-    int level = l.percent >= 80.0f ? 2 : (l.percent >= 50.0f ? 1 : 0);
-    if (l.severity == "critical") level = 2;
-    else if (l.severity == "warning" && level < 1) level = 1;
-    return level == 2 ? kRed : (level == 1 ? kAmber : kGreen);
-}
-
 void resetText(int32_t left, char* out, size_t size){
     if (left < 0){ out[0] = '\0'; return; }
     if (left == 0){ snprintf(out, size, "resetting now"); return; }
-    int m = static_cast<int>((left + 59) / 60);
-    if (m < 60)            snprintf(out, size, "resets in %d min", m);
-    else if (m < 24 * 60)  snprintf(out, size, "resets in %d h %02d min", m / 60, m % 60);
-    else                   snprintf(out, size, "resets in %d d %d h", m / (24 * 60), (m / 60) % 24);
+    char d[32];
+    usageDurationText(left, d, sizeof(d));
+    snprintf(out, size, "resets in %s", d);
+}
+
+// The second line of a row on the usage page: the reset as a clock time
+// (and how far off it is, when there is room) on the left, where the usage
+// ends up at the reset on the right
+void drawDetailLine(M5Canvas& c, const UsageLimit& l, const Usage& usage, int32_t elapsedSec,
+                    int x, int y, int w, uint16_t bg){
+    const int32_t left = l.resetsIn < 0 ? -1 : (l.resetsIn > elapsedSec ? l.resetsIn - elapsedSec : 0);
+    const UsagePace pace = usagePace(l, elapsedSec);
+
+    char right[48] = "";
+    uint16_t rightColor = kDim;
+    if (pace.valid){
+        if (pace.runsOutIn == 0){
+            snprintf(right, sizeof(right), "limit reached");
+            rightColor = kRed;
+        } else if (pace.runsOutIn > 0){
+            char when[24];
+            usageWhenText(usage, usage.nowUnix + elapsedSec + pace.runsOutIn, elapsedSec, when, sizeof(when));
+            if (when[0]){
+                snprintf(right, sizeof(right), "runs out %s", when);
+            } else {
+                char d[32];
+                usageDurationText(pace.runsOutIn, d, sizeof(d));
+                snprintf(right, sizeof(right), "runs out in %s", d);
+            }
+            rightColor = kAmber;
+        } else {
+            snprintf(right, sizeof(right), "on pace for %d%%", static_cast<int>(lroundf(pace.projected)));
+        }
+    }
+
+    char when[24] = "", d[32] = "", text[80] = "";
+    if (left > 0){
+        usageWhenText(usage, usage.nowUnix + elapsedSec + left, elapsedSec, when, sizeof(when));
+        usageDurationText(left, d, sizeof(d));
+    }
+    const int rightW = right[0] ? c.textWidth(right) + 24 : 0;
+    if (when[0]){
+        snprintf(text, sizeof(text), "resets %s, in %s", when, d);
+        if (c.textWidth(text) > w - rightW) snprintf(text, sizeof(text), "resets %s", when);
+    } else {
+        resetText(left, text, sizeof(text));
+    }
+    c.setTextDatum(textdatum_t::top_left);
+    c.setTextColor(kDim, bg);
+    if (text[0]) c.drawString(text, x, y);
+    if (right[0]){
+        c.setTextDatum(textdatum_t::top_right);
+        c.setTextColor(rightColor, bg);
+        c.drawString(right, x + w, y);
+        c.setTextDatum(textdatum_t::top_left);
+    }
 }
 
 void percentText(const UsageLimit& l, char* out, size_t size){
@@ -132,6 +177,20 @@ void drawSplitRow(M5Canvas& c, int x, int top, int w, const RowStyle& st,
 
 }  // namespace
 
+uint16_t usageLevelColor(float percent, const std::string& severity){
+    int level = percent >= 80.0f ? 2 : (percent >= 50.0f ? 1 : 0);
+    if (severity == "critical") level = 2;
+    else if (severity == "warning" && level < 1) level = 1;
+    return level == 2 ? kRed : (level == 1 ? kAmber : kGreen);
+}
+
+void usageDurationText(int32_t sec, char* out, size_t size){
+    int m = static_cast<int>((sec + 59) / 60);
+    if (m < 60)            snprintf(out, size, "%d min", m);
+    else if (m < 24 * 60)  snprintf(out, size, "%d h %02d min", m / 60, m % 60);
+    else                   snprintf(out, size, "%d d %d h", m / (24 * 60), (m / 60) % 24);
+}
+
 int usageRowCount(const Usage& usage){
     return static_cast<int>(usage.limits.size()) + (usage.split.empty() ? 0 : 1);
 }
@@ -147,7 +206,7 @@ void usageAgeText(int32_t age, char* out, size_t size){
 }
 
 void drawUsageRows(M5Canvas& c, int x, int y, int w, int h,
-                   const Usage& usage, int32_t elapsedSec, uint16_t bg){
+                   const Usage& usage, int32_t elapsedSec, uint16_t bg, bool detailed){
     const int rows = usageRowCount(usage);
     const int limitRows = static_cast<int>(usage.limits.size());
     if (rows == 0 || w <= 0 || h <= 0) return;
@@ -200,10 +259,23 @@ void drawUsageRows(M5Canvas& c, int x, int y, int w, int h,
         int fw = static_cast<int>(w * f);
         if (fw > 0){
             if (fw < st->barH) fw = st->barH;   // a sliver still reads as a pill
-            c.fillRoundRect(x, by, fw, st->barH, st->barH / 2, barColor(l));
+            c.fillRoundRect(x, by, fw, st->barH, st->barH / 2, usageLevelColor(l.percent, l.severity));
+        }
+        if (detailed){
+            // Where an even pace would have the bar by now
+            const UsagePace pace = usagePace(l, elapsedSec);
+            if (pace.known){
+                const int tx = x + static_cast<int>((w - 3) * pace.elapsed);
+                const int ext = st->barH >= 16 ? 5 : 3;   // past the bar, clear of the texts
+                c.fillRect(tx - 1, by - ext - 1, 5, st->barH + 2 * ext + 2, bg);
+                c.fillRect(tx, by - ext, 3, st->barH + 2 * ext, kText);
+            }
         }
 
-        if (st->small){
+        if (st->small && detailed){
+            c.setFont(st->small);
+            drawDetailLine(c, l, usage, elapsedSec, x, top + st->resetY, w, bg);
+        } else if (st->small){
             char reset[48];
             int32_t left = l.resetsIn < 0 ? -1 : (l.resetsIn > elapsedSec ? l.resetsIn - elapsedSec : 0);
             resetText(left, reset, sizeof(reset));

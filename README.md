@@ -48,7 +48,7 @@ The screen splits itself by the number of live sessions: one, two side by side, 
 
 ![the detail page](docs/images/tab5-detail.png)
 
-**Tap a tile** to open its detail page: the icon, name and clock on one side and, on the other, the **hook inspector** for that session: every field of the last hook event the daemon forwarded (`tool_name`, `tool_input.command`, `prompt`, `cwd`, `permission_mode`, …) with a running age, and a short history of the previous events. Tap anywhere to go back. The daemon sends the tablet the raw events, so this is also the quickest way to see what Claude Code actually delivers to a hook.
+**Tap a tile** to open its detail page: the icon, name and clock on one side and, on the other, the **hook inspector** for that session: every field of the last hook event the daemon forwarded (`tool_name`, `tool_input.command`, `prompt`, `cwd`, `permission_mode`, …) with a running age, and a short history of the previous events. Tap anywhere to go back. The daemon sends the tablet the raw events, so this is also the quickest way to see what Claude Code actually delivers to a hook. A tap on the usage tile opens the [usage page](#the-tab5-usage-page) instead.
 
 ## The Tab5 screensaver: your plan usage
 
@@ -70,6 +70,19 @@ The daemon gets the numbers from two places:
 With `-AccountUsage` the card and the tile end with one more row, **This week by app**: how the week's usage divides between Claude Code, chats and Cowork, as a bar in one colour per app and a legend (`Claude Code 34%  Chats 55%  Cowork 11%`). The status line does not carry it, so it comes from the account poll only.
 
 `GET http://localhost:47831/usage` shows what the daemon has, where it came from and how the last poll went.
+
+## The Tab5 usage page
+
+![the usage page, with made-up numbers](docs/images/tab5-usage.png)
+
+A tap on the usage tile opens a page with everything the daemon knows about your plan; a tap anywhere goes back.
+
+- **Every limit in full.** The rows of the tile, at full size, with a white tick on each bar where an even pace would have it by now: a bar past its tick is ahead of pace. Under each bar, the reset as a clock time and how far off it is (`resets Wed 07:00, in 20 h 33 min`), and where the usage ends up at the reset if it keeps the pace it had so far (`on pace for 69%`), or, when that passes 100 %, the moment it runs out (`runs out Sat 15:20`, in amber).
+- **The week as a chart**: the weekly limit hour by hour since its window started, the even-pace diagonal, and a dashed projection to the reset. The daemon keeps every reading of the weekly limit in `%LOCALAPPDATA%\claude-monitor\usage-history.jsonl` (a line when it changes, otherwise one an hour; 35 days are kept) and, the first time, fills in the current week from its own log.
+- **Claude Code by project**: each project's share of the weekly limit, this week and today. The account splits the week by app, not by project, so this one is an estimate: the daemon reads the token counts Claude Code writes in its own transcripts (`~/.claude/projects`, incrementally: about two seconds for a week of 1.7 GB the first time, milliseconds after that), weighs them the way the API prices them (cache reads a tenth of fresh input, cache writes 1.25 or 2 times, output 5 times; Sonnet and Haiku less than Opus) and splits Claude Code's part of the week (the *by app* row) in the same proportions. The top five, then the rest. Only Claude Code counts here, since chats and Cowork leave no transcript on this machine; only token counts are read. `-NoProjectUsage` turns it off.
+- **Plan and billing**: the plan, since when, and the extra usage the plan can buy past its limits: off, or what was spent this month against its cap. The account does not expose prices, invoices or the next billing date, so they are not on the page.
+
+The limits, the extra usage and the week by app come from the `-AccountUsage` poll; the plan from Claude Code's login and, every six hours, the account's profile endpoint (undocumented, like the usage one). With the status line alone the page has the two limits, the chart and the projects (all of the week counted as Claude Code's). The host sends its clock with the numbers, since the board has none: the times on the page are the computer's local time. `view usage` opens the page from the host.
 
 ## Claude Desktop
 
@@ -93,7 +106,7 @@ The Anthropic API does not expose session state, so the device cannot poll. Inst
 
 The daemon keeps one state per session and sends the cube the most urgent one (error > `!` = `?` > hourglass > compacting > processing > idle), the Tab5 one line per session, and both a heartbeat every 30 s. It also watches the process tree: Claude Code has no hook for the moment you approve a permission, but the approved tool's process appears under the session's `claude.exe` within half a second, and that is when the red sign goes back to the gear (and the EXT badge comes on).
 
-The protocol is one command per line, `\n`-terminated, no JSON, no handshake. State words: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Counters and flags: `subagent_start` / `subagent_stop`, `tool_start` / `tool_stop`. `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Queries: `status` answers with one `STATUS` line (state, calibration in effect, session codes, link, work seconds, screen) and `version` with one `VERSION` line (board, model detected, chip, flash, firmware, ESP-IDF and M5Unified versions, protocol version, `features=`, build time, uptime, reset reason); the Tab5 also answers `screenshot` with its display as text (what made the pictures above), and `view grid` / `view detail <id>` does what a tap does. Two kinds of line exist only for boards that ask for them in `features=`: `event <name>` with tab-separated `key=value` pairs carries a whole hook event (`events`), and `session <id>` with `label=`, `state=`, `subagents=`, `tool=`, `project=` describes one live session (`sessions`), with `session_end <id>` and `session_clear`. A third, `usage <source>` with one `limit=<label>|<percent>|<seconds to reset>|<severity>` per limit, feeds the Tab5's usage tile and screensaver, with `split=<app>:<percent>|...` for the week by app (`usage`, protocol 7). The AtomS3R never receives any of them.
+The protocol is one command per line, `\n`-terminated, no JSON, no handshake. State words: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Counters and flags: `subagent_start` / `subagent_stop`, `tool_start` / `tool_stop`. `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Queries: `status` answers with one `STATUS` line (state, calibration in effect, session codes, link, work seconds, screen) and `version` with one `VERSION` line (board, model detected, chip, flash, firmware, ESP-IDF and M5Unified versions, protocol version, `features=`, build time, uptime, reset reason); the Tab5 also answers `screenshot` with its display as text (what made the pictures above), and `view grid` / `view detail <id>` does what a tap does. Two kinds of line exist only for boards that ask for them in `features=`: `event <name>` with tab-separated `key=value` pairs carries a whole hook event (`events`), and `session <id>` with `label=`, `state=`, `subagents=`, `tool=`, `project=` describes one live session (`sessions`), with `session_end <id>` and `session_clear`. A third, `usage <source>` with one `limit=<label>|<percent>|<seconds to reset>|<severity>` per limit, feeds the Tab5's usage tile and screensaver, with `split=<app>:<percent>|...` for the week by app (`usage`, protocol 7); protocol 8 adds the usage page's fields to the same line (`now=` the host's clock and UTC offset, `windows=` each limit's length, `plan=`, `extra=`, `history=` the week hour by hour, one `project=<name>|<week %>|<today %>` per project), which older boards skip, and `view usage`. The AtomS3R never receives any of them.
 
 The daemon is optional: the hooks can also run a one-line script per event that writes to the port directly (see [Without the daemon](#without-the-daemon)). The daemon is better in every way that matters: no process start-up per event, a single writer on the port, events in order, a log with timestamps, per-session tracking, approval detection.
 
@@ -273,7 +286,7 @@ Endpoints, all on `http://localhost:47831/`:
 |---|---|
 | `POST /hook` | what the hooks call; body is Claude Code's hook JSON |
 | `POST /statusline` | what the status line calls; body is Claude Code's status line JSON, the answer is the text to show (see [the screensaver](#the-tab5-screensaver-your-plan-usage)) |
-| `GET /usage` | the plan usage the daemon has, its source and age, and how the last account poll went |
+| `GET /usage` | the plan usage the daemon has, its source and age, how the last account poll went, and the usage page's data: plan, extra usage, the week hour by hour, the projects with their token counts, how the transcript reader is doing |
 | `GET /status` | daemon state, sessions (state, project, pid, live tool processes, last event), what the device was last told, the device's `VERSION` fields read when the port was opened |
 | `GET /version` | asks the device for its `VERSION` line and returns it raw and parsed, plus the daemon's script path and start time |
 | `GET /events?n=20` | the last hook events as `event` lines (time, tag, line), newest first, and how many were sent to the device |
@@ -286,7 +299,7 @@ Endpoints, all on `http://localhost:47831/`:
 
 ## Claude Code hooks
 
-Hooks live in `~/.claude/settings.json` (all sessions) or `.claude/settings.json` in a project. With the daemon, every event is the same HTTP hook (the block in [step 4](#installing-step-by-step)) and the mapping lives in the daemon. The hook sends the project root in a header: the payload only carries `cwd`, which follows the shell around, while `${CLAUDE_PROJECT_DIR}` is the directory the session started in; header values interpolate environment variables only when they are listed in `allowedEnvVars`. Without the header (older configuration) the daemon falls back to the `cwd` of the first event it sees for the session.
+Hooks live in `~/.claude/settings.json` (all sessions) or `.claude/settings.json` in a project. With the daemon, every event is the same HTTP hook (the block in [step 4](#installing-step-by-step)) and the mapping lives in the daemon. The hook sends the project root in a header: the payload only carries `cwd`, which follows the shell around, while `${CLAUDE_PROJECT_DIR}` is the directory the session started in; header values interpolate environment variables only when they are listed in `allowedEnvVars`. When the header is missing (older configuration) or arrives empty, as it did for every session checked in November 2026, the daemon reads where the session started from the first `cwd` in its transcript (the payload's `transcript_path`), and takes the `cwd` of the first event it sees only when there is no transcript yet.
 
 The mapping the daemon applies:
 
@@ -388,7 +401,7 @@ Everything that does not depend on the hardware is an ESP-IDF component; each bo
 
 ```
 claude-monitor/
-├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver
+├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page
 │   ├── include/monitor/*.h
 │   ├── src/*.cpp
 │   └── idf_component.yml           # m5stack/m5unified ^0.2
@@ -428,7 +441,7 @@ Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so 
 
 ## Tests and CI
 
-The board-independent code with no display dependency (`protocol.cpp`, `tilt.cpp`, `orientation.cpp`, `usage.cpp`) has host tests in `tests/host/`: plain C++17, no framework. `tests/host/run.sh` builds and runs them on Linux/macOS with any `g++` or `clang++`; `tests/host/run.ps1` does it on Windows with MSVC (found through `vswhere`) or a C++17 `g++`. They cover the line parser, every protocol word, the `calibrate` syntax, the tilt filter and the orientation steps. The icons and the state machine need an `M5Canvas`, so they are checked on the hardware.
+The board-independent code with no display dependency (`protocol.cpp`, `tilt.cpp`, `orientation.cpp`, `usage.cpp`) has host tests in `tests/host/`: plain C++17, no framework. `tests/host/run.sh` builds and runs them on Linux/macOS with any `g++` or `clang++`; `tests/host/run.ps1` does it on Windows with MSVC (found through `vswhere`) or a C++17 `g++`. They cover the line parser, every protocol word, the `calibrate` syntax, the tilt filter, the orientation steps, the `usage` line, the pace projection and the clock texts of the usage page. The icons and the state machine need an `M5Canvas`, so they are checked on the hardware.
 
 GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds both firmwares (AtomS3R on `esp32s3`, Tab5 on `esp32p4`) with ESP-IDF 5.5 on every push and pull request, keeping each board's four images as a workflow artifact (`tools/collect-images.sh` names and merges them from the build's own flash arguments). On a version tag it also attaches them to the GitHub release for that tag and publishes the web flasher page with the AtomS3R's three parts and their ESP Web Tools manifest. The workflow can also be run by hand with a release tag to republish the flasher page from that release's assets.
 
@@ -443,6 +456,7 @@ GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds bo
 - A manual write through `Send-ClaudeState.ps1` or `POST /state/<state>` bypasses the per-session bookkeeping; the next hook event that changes the aggregate state overrides it.
 - The web flasher carries the AtomS3R image only; the Tab5 is flashed with `esptool` or from source.
 - The screensaver's plan usage comes from a terminal session's status line or from `-AccountUsage`, which relies on an undocumented endpoint. With only the VS Code extension and no `-AccountUsage`, the card says it has no data.
+- The usage page's split by project is an estimate from token counts: the plans' limits are not published in tokens, and the weights are the API's relative prices. It covers Claude Code on this computer only. The extra usage has only been seen switched off; the enabled form is read by the same field names and may need a fix the first time it shows up.
 - Claude Desktop's chats have no live state on the monitor, and its Cowork and scheduled tasks only show what the app notifies (`-DesktopNotifications`, Windows only); when a red sign from a notification goes away is a guess (see [Claude Desktop](#claude-desktop)).
 
 ## License

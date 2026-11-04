@@ -10,6 +10,9 @@
 // hook inspector for that session (every field of its last hook event and
 // a short history); a tap anywhere on the detail page goes back. A short
 // two-tone beep marks a red icon appearing (permission wanted, or error).
+// A tap on the usage tile opens the usage page: every limit with its pace
+// and reset time, the week as a chart, Claude Code's share of it per
+// project, the plan and its extra usage; a tap goes back.
 //
 // The whole display turns with gravity in 90-degree steps, like a tablet;
 // which way the sensor maps to the panel is calibrated per unit with
@@ -62,6 +65,7 @@
 #include "monitor/tilt.h"
 #include "monitor/ui.h"
 #include "monitor/usage.h"
+#include "monitor/usagepage.h"
 #include "monitor/usageview.h"
 #include "monitor/version.h"
 
@@ -104,6 +108,10 @@ constexpr int kAutoOffFrames = 30 * 60 * 30;   // 30 min
 
 // Names, clocks and the inspector refresh once a second
 constexpr int kTextRefreshFrames = 30;
+
+// The usage page every 10 s and on each usage line: its texts change by the
+// minute, and a redraw (about 140 ms) holds the loop, taps included
+constexpr int kPageRefreshFrames = 10 * 30;
 
 // One frame at the 30 fps every counter assumes; the loop measures how
 // many really went by (a 486 px gear takes longer than that to draw)
@@ -176,8 +184,10 @@ Slot placeholder;   // shown while no session lines have arrived; driven by the 
 M5Canvas viewCanvas(&M5.Display);
 monitor::UsageSaver saver(M5.Display);   // the screensaver; its card sprite lives in PSRAM
 M5Canvas usageCanvas(&M5.Display);       // the bars of the usage tile in the grid
+M5Canvas pageCanvas(&M5.Display);        // the usage page, as large as the display
+monitor::UsagePage usagePage(pageCanvas);
 
-enum class View { Grid, Detail };
+enum class View { Grid, Detail, Usage };
 
 // ---------------- serial ----------------
 
@@ -334,6 +344,7 @@ extern "C" void app_main(void){
     bool  relayout   = true;
     bool  textDirty  = true;
     bool  viewDirty  = true;
+    bool  pageDirty  = true;
     Rect  detailLabel, detailClock;   // text bands on the detail page
     TextStyle style = textStyleFor(720);   // for the layout on screen
 
@@ -410,6 +421,18 @@ extern "C" void app_main(void){
             detail->ui.redraw();
             usageShown = false;
             viewDirty = true;
+        } else if (view == View::Usage && hasUsage()){
+            // The whole display: the page draws itself every 10 s
+            if (pageCanvas.width() != W || pageCanvas.height() != H){
+                pageCanvas.deleteSprite();
+                pageCanvas.setPsram(true);
+                pageCanvas.setColorDepth(16);
+                if (!pageCanvas.createSprite(W, H)){
+                    ESP_LOGE(TAG, "usage page canvas allocation failed");
+                }
+            }
+            usageShown = false;
+            pageDirty = true;
         } else {
             view = View::Grid;
             auto vis = visibleSlots();
@@ -483,6 +506,7 @@ extern "C" void app_main(void){
     // Names and clocks (and the inspector on the detail page)
     auto drawTexts = [&]() {
         char clock[16];
+        if (view == View::Usage) return;   // the page has its own
         if (view == View::Detail && detail){
             clockText(detail->ui.framesInState(), clock, sizeof(clock));
             drawCentred(detail->label.c_str(), detailLabel.x + detailLabel.w / 2, detailLabel.y + detailLabel.h / 2,
@@ -499,6 +523,11 @@ extern "C" void app_main(void){
             }
             drawUsageTile();
         }
+    };
+
+    auto drawUsagePage = [&]() {
+        if (view != View::Usage || pageCanvas.width() == 0) return;
+        usagePage.draw(usage, static_cast<int32_t>((nowMs() - usageMs) / 1000));
     };
 
     auto drawInspector = [&]() {
@@ -562,7 +591,7 @@ extern "C" void app_main(void){
                          codes.empty() ? "-" : codes.c_str(), link, work,
                          saver.active() ? "saver" : screenName(brightness), tool ? 1 : 0,
                          events, orient.sector(), static_cast<int>(visibleSlots().size()),
-                         saver.active() ? "saver" : (view == View::Detail ? "detail" : "grid"), usage);
+                         saver.active() ? "saver" : (view == View::Detail ? "detail" : (view == View::Usage ? "usage" : "grid")), usage);
         writeLine(msg, n);
     };
 
@@ -581,6 +610,7 @@ extern "C" void app_main(void){
     bool    autoOff    = false;   // switched off by the idle / no-host timer
     uint8_t brightness = kBrightness;
     int     frame      = 0;
+    int     pageFrames = 0;   // since the usage page was last drawn
     monitor::State lastAggregate = monitor::State::Off;
     int     aggregateFrames = 0;   // real frames the aggregate state has lasted
 
@@ -702,9 +732,13 @@ extern "C" void app_main(void){
                 case monitor::Command::View: {
                     // "view grid" or "view detail <id>": what a tap does, from the host
                     // (documentation captures, debugging); "view detail" alone opens the
-                    // only tile there is; "view saver" starts the screensaver
+                    // only tile there is; "view saver" starts the screensaver; "view
+                    // usage" opens the usage page (when there are numbers)
                     if (cmd.arg == "saver"){
                         enterSaver();
+                    } else if (cmd.arg == "usage"){
+                        leaveSaver();
+                        if (hasUsage()){ detail = nullptr; view = View::Usage; relayout = true; }
                     } else if (cmd.arg.rfind("detail", 0) == 0){
                         leaveSaver();
                         std::string id = cmd.arg.size() > 7 ? cmd.arg.substr(7) : "";
@@ -724,8 +758,12 @@ extern "C" void app_main(void){
                     usageMs = nowMs();
                     saver.setUsage(usage, usageMs);
                     // The tile comes or goes with the numbers; the screensaver
-                    // re-lays the grid itself when it hands the screen back
-                    if (!saver.active() && view == View::Grid && hasUsage() != usageShown) relayout = true;
+                    // re-lays the grid itself when it hands the screen back; the
+                    // page goes back to the grid when the numbers are gone
+                    if (view == View::Usage){
+                        pageDirty = true;
+                        if (!hasUsage()){ view = View::Grid; if (!saver.active()) relayout = true; }
+                    } else if (!saver.active() && view == View::Grid && hasUsage() != usageShown) relayout = true;
                     else textDirty = true;
                     break;
                 }
@@ -735,6 +773,7 @@ extern "C" void app_main(void){
                         if (relayout){ applyLayout(); relayout = false; }
                         drawTexts();
                         drawInspector();
+                        drawUsagePage();
                     }
                     monitor::dumpDisplay(M5.Display, writeAll);
                     break;
@@ -779,16 +818,20 @@ extern "C" void app_main(void){
             }
         }
 
-        // Touch: wake, leave the screensaver, open a tile's detail page, or leave it
+        // Touch: wake, leave the screensaver, open a tile's detail page or
+        // the usage page, or leave it
         auto t = M5.Touch.getDetail();
         if (t.wasClicked()){
             if (autoOff){
                 autoOff = false;
             } else if (saver.active()){
                 leaveSaver();
-            } else if (view == View::Detail){
+            } else if (view != View::Grid){
                 view = View::Grid;
                 detail = nullptr;
+                relayout = true;
+            } else if (usageShown && usageTile.contains(t.x, t.y)){
+                view = View::Usage;
                 relayout = true;
             } else {
                 for (Slot* s : visibleSlots()){
@@ -854,6 +897,7 @@ extern "C" void app_main(void){
             placeholder.ui.tick(displayOn && placeholder.ui.visible(), frames);
             tickBeep();
             frame += frames;   // since the last text refresh
+            pageFrames += frames;
             aggregateFrames += frames;
             if (displayOn) saver.tick(frames, nowMs());
         }
@@ -865,6 +909,11 @@ extern "C" void app_main(void){
         if (tilesShown && view == View::Detail && (viewDirty || frame >= kTextRefreshFrames)){
             drawInspector();
             viewDirty = false;
+        }
+        if (tilesShown && view == View::Usage && (pageDirty || pageFrames >= kPageRefreshFrames)){
+            drawUsagePage();
+            pageDirty = false;
+            pageFrames = 0;
         }
         if (frame >= kTextRefreshFrames) frame = 0;
     }

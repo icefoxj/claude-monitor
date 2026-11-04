@@ -62,8 +62,9 @@ namespace monitor {
 // Bumped when words are added: 1 = the 1.0/1.1 set (states, subagents,
 // status); 2 = sessions, ping, calibrate, version; 3 = event;
 // 4 = tool_start/stop; 5 = session, session_end, session_clear;
-// 6 = screenshot, view; 7 = usage
-constexpr int kProtocolVersion = 7;
+// 6 = screenshot, view; 7 = usage; 8 = usage now=/windows=/plan=/extra=/
+// history=/project= (the usage page) and "view usage"
+constexpr int kProtocolVersion = 8;
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 

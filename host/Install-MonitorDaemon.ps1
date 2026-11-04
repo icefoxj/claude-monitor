@@ -14,7 +14,8 @@ param(
     [int]$HttpPort = 47831,
     [switch]$LogEvents,      # also append every raw hook payload to %LOCALAPPDATA%\claude-monitor\hooks.jsonl
     [switch]$AccountUsage,           # poll the plan usage like /usage does, with Claude Code's login (for the Tab5's screensaver)
-    [switch]$DesktopNotifications    # show the Claude desktop app's notifications (Cowork, scheduled tasks) as a session
+    [switch]$DesktopNotifications,   # show the Claude desktop app's notifications (Cowork, scheduled tasks) as a session
+    [switch]$NoProjectUsage          # do not read Claude Code's transcripts for the usage page's split by project
 )
 
 $taskName = "claude-monitor daemon"
@@ -44,6 +45,7 @@ $argument = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scr
 if ($LogEvents) { $argument += " -LogEvents" }
 if ($AccountUsage) { $argument += " -AccountUsage" }
 if ($DesktopNotifications) { $argument += " -DesktopNotifications" }
+if ($NoProjectUsage) { $argument += " -NoProjectUsage" }
 # Through a headless conhost: with Windows Terminal as the default terminal
 # the console is handed to a Terminal window that -WindowStyle Hidden does
 # not hide, and closing that window kills the daemon (exit 0xC000013A)

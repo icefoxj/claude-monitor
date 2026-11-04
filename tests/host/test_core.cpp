@@ -130,9 +130,10 @@ void testParseCommand(){
     CHECK(parseCommand("view grid").arg == "grid");
     CHECK(parseCommand("view detail 33db5bf1-e7eb").arg == "detail 33db5bf1-e7eb");
     CHECK(parseCommand("view saver").arg == "saver");
+    CHECK(parseCommand("view usage").arg == "usage");
     CHECK(parseCommand("usage none").kind == Command::Usage);
     CHECK(parseCommand("usage account\tage=12").arg == "account\tage=12");
-    CHECK(kProtocolVersion == 7);
+    CHECK(kProtocolVersion == 8);
 
     ParsedCommand se = parseCommand("session 33db5bf1-e7eb\tlabel=claude-monitor\tstate=waiting_user\tsubagents=0\ttool=1");
     CHECK(se.kind == Command::Session);
@@ -407,6 +408,77 @@ void testUsage(){
     CHECK(parseUsage("account\tlimit=a|1\tlimit=b|2\tlimit=c|3\tlimit=d|4\tlimit=e|5", u));
     CHECK(u.limits.size() == Usage::kMaxLimits);
     CHECK(!parseUsage("", u));
+
+    // Protocol 8, the usage page: the host's clock, windows in limit
+    // order, plan, extra usage, the week's history, projects
+    CHECK(parseUsage("account\tage=0\tlimit=Current session|6|10800|normal\tlimit=This week|61|75599|normal"
+                     "\tnow=1793700000|-10800\twindows=18000|604800\tplan=Max 5x|active|1771100000"
+                     "\textra=on|12.40|50.00|USD\thistory=1793170800|3600|0,1,,3,x"
+                     "\tproject=api|39.1|0.4\tproject=claude-monitor|1|\tproject=|3|1\tproject=bad|y", u));
+    CHECK(u.nowUnix == 1793700000 && u.utcOffset == -10800);
+    CHECK(u.limits.size() == 2 && u.limits[0].windowSec == 18000 && u.limits[1].windowSec == 604800);
+    CHECK(u.plan.name == "Max 5x" && u.plan.status == "active" && u.plan.since == 1771100000);
+    CHECK(u.extra.state == "on" && u.extra.used == "12.40" && u.extra.limit == "50.00" && u.extra.currency == "USD");
+    CHECK(u.history.start == 1793170800 && u.history.step == 3600 && u.history.values.size() == 5);
+    CHECK(u.history.values[0] == 0 && u.history.values[1] == 1 && u.history.values[2] == -1
+          && u.history.values[3] == 3 && u.history.values[4] == -1);
+    CHECK(u.projects.size() == 2);
+    CHECK(u.projects[0].name == "api" && near(u.projects[0].week, 39.1f) && near(u.projects[0].today, 0.4f));
+    CHECK(u.projects[1].name == "claude-monitor" && near(u.projects[1].week, 1.0f) && near(u.projects[1].today, 0.0f));
+    CHECK(parseUsage("account\tlimit=a|1\twindows=5\textra=off", u));
+    CHECK(u.limits[0].windowSec == 5 && u.extra.state == "off" && u.extra.used.empty() && u.nowUnix == 0);
+    CHECK(parseUsage("account\textra=on|3.10|-|EUR\thistory=5|0|1,2", u));
+    CHECK(u.extra.limit.empty() && u.extra.currency == "EUR" && u.history.values.empty());
+    CHECK(parseUsage("account\tlimit=a|1", u) && u.limits[0].windowSec == 0 && u.plan.name.empty() && u.extra.state.empty());
+
+    // Pace: 61 % with 7/8 of the week gone ends near 70 %
+    UsageLimit l;
+    l.percent = 61.0f; l.resetsIn = 75600; l.windowSec = 604800;
+    UsagePace p = usagePace(l, 0);
+    CHECK(p.known && p.valid && near(p.elapsed, 0.875f) && near(p.projected, 69.714f, 0.01f) && p.runsOutIn == -1);
+    p = usagePace(l, 75600 + 100);   // past the reset: the whole window gone
+    CHECK(p.known && near(p.elapsed, 1.0f) && near(p.projected, 61.0f));
+    // 90 % halfway through a 5-hour window: 100 % 1000 s from now
+    l.percent = 90.0f; l.resetsIn = 9000; l.windowSec = 18000;
+    p = usagePace(l, 0);
+    CHECK(p.valid && near(p.projected, 180.0f) && p.runsOutIn == 1000);
+    p = usagePace(l, 500);           // the countdown follows the line's age
+    CHECK(near(p.elapsed, 0.5278f, 0.001f));
+    l.percent = 100.0f;
+    CHECK(usagePace(l, 0).runsOutIn == 0);
+    l.percent = 3.0f; l.resetsIn = 17500;   // 2.8 % of the window: no projection yet
+    p = usagePace(l, 0);
+    CHECK(p.known && !p.valid);
+    l.windowSec = 0;
+    CHECK(!usagePace(l, 0).known);
+    l.windowSec = 18000; l.resetsIn = -1;
+    CHECK(!usagePace(l, 0).known);
+
+    // The host's clock: 2026-11-03 10:00 UTC, 07:00 at UTC-3, a Tuesday
+    Usage c;
+    c.nowUnix = 1793700000;
+    c.utcOffset = -10800;
+    char t[32];
+    usageWhenText(c, 1793700000 + 2 * 3600, 0, t, sizeof(t));
+    CHECK(std::string(t) == "09:00");
+    usageWhenText(c, 1793775599, 0, t, sizeof(t));          // the weekly reset, Wed 06:59:59 UTC: to the nearest minute
+    CHECK(std::string(t) == "Wed 04:00");
+    usageWhenText(c, 1793775500, 0, t, sizeof(t));
+    CHECK(std::string(t) == "Wed 03:58");
+    usageWhenText(c, 1793700000 + 17 * 86400, 0, t, sizeof(t));
+    CHECK(std::string(t) == "20 Nov");
+    usageWhenText(c, 1793700000 + 14 * 3600, 3600 * 4, t, sizeof(t));   // 21:00 local, four hours after the line
+    CHECK(std::string(t) == "21:00");
+    usageDateText(c, 1771100000, t, sizeof(t));
+    CHECK(std::string(t) == "14 Feb 2026");
+    CHECK(usageWeekday(1793700000, -10800) == 2);
+    CHECK(usageWeekday(1793664000, -10800) == 1);          // 00:00 UTC is still Monday at UTC-3
+    CHECK(usageSecondsOfDay(1793664000, -10800) == 21 * 3600);
+    CHECK(std::string(usageWeekdayName(3)) == "Wed");
+    c.nowUnix = 0;                                          // no clock from the host
+    usageWhenText(c, 1793700000, 0, t, sizeof(t));
+    CHECK(t[0] == '\0');
+    CHECK(usageLocalNow(c, 10) == 0);
 }
 
 }  // namespace
