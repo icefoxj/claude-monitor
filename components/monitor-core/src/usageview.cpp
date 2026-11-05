@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <string>
 
+#include "monitor/anime.h"
+#include "monitor/theme.h"
+
 namespace monitor {
 
 namespace {
@@ -48,63 +51,22 @@ const RowStyle kStyles[] = {
     { &fonts::DejaVu18, &fonts::DejaVu18, nullptr,           40,  0, 24, 10,  0,   0 },
 };
 
-void resetText(int32_t left, char* out, size_t size){
-    if (left < 0){ out[0] = '\0'; return; }
-    if (left == 0){ snprintf(out, size, "resetting now"); return; }
-    char d[32];
-    usageDurationText(left, d, sizeof(d));
-    snprintf(out, size, "resets in %s", d);
-}
-
 // The second line of a row on the usage page: the reset as a clock time
 // (and how far off it is, when there is room) on the left, where the usage
 // ends up at the reset on the right
 void drawDetailLine(M5Canvas& c, const UsageLimit& l, const Usage& usage, int32_t elapsedSec,
                     int x, int y, int w, uint16_t bg){
-    const int32_t left = l.resetsIn < 0 ? -1 : (l.resetsIn > elapsedSec ? l.resetsIn - elapsedSec : 0);
-    const UsagePace pace = usagePace(l, elapsedSec);
-
-    char right[48] = "";
-    uint16_t rightColor = kDim;
-    if (pace.valid){
-        if (pace.runsOutIn == 0){
-            snprintf(right, sizeof(right), "limit reached");
-            rightColor = kRed;
-        } else if (pace.runsOutIn > 0){
-            char when[24];
-            usageWhenText(usage, usage.nowUnix + elapsedSec + pace.runsOutIn, elapsedSec, when, sizeof(when));
-            if (when[0]){
-                snprintf(right, sizeof(right), "runs out %s", when);
-            } else {
-                char d[32];
-                usageDurationText(pace.runsOutIn, d, sizeof(d));
-                snprintf(right, sizeof(right), "runs out in %s", d);
-            }
-            rightColor = kAmber;
-        } else {
-            snprintf(right, sizeof(right), "on pace for %d%%", static_cast<int>(lroundf(pace.projected)));
-        }
-    }
-
-    char when[24] = "", d[32] = "", text[80] = "";
-    if (left > 0){
-        usageWhenText(usage, usage.nowUnix + elapsedSec + left, elapsedSec, when, sizeof(when));
-        usageDurationText(left, d, sizeof(d));
-    }
-    const int rightW = right[0] ? c.textWidth(right) + 24 : 0;
-    if (when[0]){
-        snprintf(text, sizeof(text), "resets %s, in %s", when, d);
-        if (c.textWidth(text) > w - rightW) snprintf(text, sizeof(text), "resets %s", when);
-    } else {
-        resetText(left, text, sizeof(text));
-    }
+    UsageDetailText t;
+    usageDetailText(l, usage, elapsedSec, t);
+    const int rightW = t.pace[0] ? c.textWidth(t.pace) + 24 : 0;
+    const char* text = (t.brief[0] && c.textWidth(t.full) > w - rightW) ? t.brief : t.full;
     c.setTextDatum(textdatum_t::top_left);
     c.setTextColor(kDim, bg);
     if (text[0]) c.drawString(text, x, y);
-    if (right[0]){
+    if (t.pace[0]){
         c.setTextDatum(textdatum_t::top_right);
-        c.setTextColor(rightColor, bg);
-        c.drawString(right, x + w, y);
+        c.setTextColor(t.tone == 2 ? kRed : (t.tone == 1 ? kAmber : kDim), bg);
+        c.drawString(t.pace, x + w, y);
         c.setTextDatum(textdatum_t::top_left);
     }
 }
@@ -191,6 +153,50 @@ void usageDurationText(int32_t sec, char* out, size_t size){
     else                   snprintf(out, size, "%d d %d h", m / (24 * 60), (m / 60) % 24);
 }
 
+void usageResetText(const UsageLimit& l, int32_t elapsedSec, char* out, size_t size){
+    const int32_t left = l.resetsIn < 0 ? -1 : (l.resetsIn > elapsedSec ? l.resetsIn - elapsedSec : 0);
+    if (left < 0){ out[0] = '\0'; return; }
+    if (left == 0){ snprintf(out, size, "resetting now"); return; }
+    char d[32];
+    usageDurationText(left, d, sizeof(d));
+    snprintf(out, size, "resets in %s", d);
+}
+
+void usageDetailText(const UsageLimit& l, const Usage& usage, int32_t elapsedSec, UsageDetailText& out){
+    out = UsageDetailText{};
+    const int32_t left = l.resetsIn < 0 ? -1 : (l.resetsIn > elapsedSec ? l.resetsIn - elapsedSec : 0);
+    const UsagePace pace = usagePace(l, elapsedSec);
+    if (pace.valid){
+        if (pace.runsOutIn == 0){
+            snprintf(out.pace, sizeof(out.pace), "limit reached");
+            out.tone = 2;
+        } else if (pace.runsOutIn > 0){
+            char when[24];
+            usageWhenText(usage, usage.nowUnix + elapsedSec + pace.runsOutIn, elapsedSec, when, sizeof(when));
+            if (when[0]){
+                snprintf(out.pace, sizeof(out.pace), "runs out %s", when);
+            } else {
+                char d[32];
+                usageDurationText(pace.runsOutIn, d, sizeof(d));
+                snprintf(out.pace, sizeof(out.pace), "runs out in %s", d);
+            }
+            out.tone = 1;
+        } else {
+            snprintf(out.pace, sizeof(out.pace), "on pace for %d%%", static_cast<int>(lroundf(pace.projected)));
+        }
+    }
+    char when[24] = "";
+    if (left > 0) usageWhenText(usage, usage.nowUnix + elapsedSec + left, elapsedSec, when, sizeof(when));
+    if (when[0]){
+        char d[32];
+        usageDurationText(left, d, sizeof(d));
+        snprintf(out.full, sizeof(out.full), "resets %s, in %s", when, d);
+        snprintf(out.brief, sizeof(out.brief), "resets %s", when);
+    } else {
+        usageResetText(l, elapsedSec, out.full, sizeof(out.full));
+    }
+}
+
 int usageRowCount(const Usage& usage){
     return static_cast<int>(usage.limits.size()) + (usage.split.empty() ? 0 : 1);
 }
@@ -207,6 +213,7 @@ void usageAgeText(int32_t age, char* out, size_t size){
 
 void drawUsageRows(M5Canvas& c, int x, int y, int w, int h,
                    const Usage& usage, int32_t elapsedSec, uint16_t bg, bool detailed){
+    if (animeTheme()){ anime::usageRows(c, x, y, w, h, usage, elapsedSec, bg, detailed); return; }
     const int rows = usageRowCount(usage);
     const int limitRows = static_cast<int>(usage.limits.size());
     if (rows == 0 || w <= 0 || h <= 0) return;
@@ -277,8 +284,7 @@ void drawUsageRows(M5Canvas& c, int x, int y, int w, int h,
             drawDetailLine(c, l, usage, elapsedSec, x, top + st->resetY, w, bg);
         } else if (st->small){
             char reset[48];
-            int32_t left = l.resetsIn < 0 ? -1 : (l.resetsIn > elapsedSec ? l.resetsIn - elapsedSec : 0);
-            resetText(left, reset, sizeof(reset));
+            usageResetText(l, elapsedSec, reset, sizeof(reset));
             if (reset[0]){
                 c.setFont(st->small);
                 c.setTextColor(kDim, bg);

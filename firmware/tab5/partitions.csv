@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,  Size
+# The single-app-large layout with a 4 MB app (the anime theme's fonts);
+# nvs keeps its offset, so a stored calibration and theme survive
+nvs,      data, nvs,     0x9000,  0x6000,
+phy_init, data, phy,     0xf000,  0x1000,
+factory,  app,  factory, 0x10000, 4M,

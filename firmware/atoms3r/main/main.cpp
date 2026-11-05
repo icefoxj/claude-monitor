@@ -262,6 +262,12 @@ extern "C" void app_main(void){
                     usb_serial_jtag_write_bytes(kNo, sizeof(kNo) - 1, pdMS_TO_TICKS(50));
                     break;
                 }
+                case monitor::Command::Theme: {
+                    // The anime theme needs room for its texts; the cube keeps the classic icons
+                    static const char kNo[] = "ERROR theme: not supported on this board\n";
+                    usb_serial_jtag_write_bytes(kNo, sizeof(kNo) - 1, pdMS_TO_TICKS(50));
+                    break;
+                }
                 case monitor::Command::Unknown:      break;
             }
         }

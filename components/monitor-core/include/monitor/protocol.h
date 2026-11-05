@@ -56,6 +56,8 @@
 //                  -> the account's plan usage (see usage.h), for boards that
 //                     list "usage" in features= (the Tab5's screensaver)
 //   "view saver"     -> the Tab5 shows its screensaver now (captures, tests)
+//   "theme <classic|anime>" -> how a board that lists "theme" in features=
+//                     draws everything (the Tab5); stored, answered with STATUS
 
 namespace monitor {
 
@@ -63,8 +65,18 @@ namespace monitor {
 // status); 2 = sessions, ping, calibrate, version; 3 = event;
 // 4 = tool_start/stop; 5 = session, session_end, session_clear;
 // 6 = screenshot, view; 7 = usage; 8 = usage now=/windows=/plan=/extra=/
-// history=/project= (the usage page) and "view usage"
-constexpr int kProtocolVersion = 8;
+// history=/project= (the usage page) and "view usage"; 9 = theme
+constexpr int kProtocolVersion = 9;
+
+// How a board draws: the original icons, or the anime theme (an orange
+// NERV-style HUD with Japanese captions; Tab5 only)
+enum class Theme { Classic, Anime };
+
+// Protocol word for a theme ("classic", "anime")
+const char* themeName(Theme t);
+
+// The reverse: false when the word is not a theme
+bool parseTheme(std::string_view name, Theme& out);
 
 enum class State { Idle, Processing, WaitingUser, Question, Error, Paused, Compacting, Off };
 
@@ -88,12 +100,12 @@ bool isAnimated(State s);
 
 enum class Command { Unknown, SetState, SubagentStart, SubagentStop, ToolStart, ToolStop,
                      Status, Version, Ping, Sessions, Calibrate, Event,
-                     Session, SessionEnd, SessionClear, Screenshot, View, Usage };
+                     Session, SessionEnd, SessionClear, Screenshot, View, Usage, Theme };
 
 struct ParsedCommand {
     Command kind = Command::Unknown;
     State state = State::Off;   // meaningful when kind == SetState
-    std::string arg;            // the rest of the line for Sessions, Calibrate, Event, Session, SessionEnd, View, Usage
+    std::string arg;            // the rest of the line for Sessions, Calibrate, Event, Session, SessionEnd, View, Usage, Theme
 };
 
 // One field of a hook event, as the host sent it

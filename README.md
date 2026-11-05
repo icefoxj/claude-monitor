@@ -84,6 +84,22 @@ A tap on the usage tile opens a page with everything the daemon knows about your
 
 The limits, the extra usage and the week by app come from the `-AccountUsage` poll; the plan from Claude Code's login and, every six hours, the account's profile endpoint (undocumented, like the usage one). With the status line alone the page has the two limits, the chart and the projects (all of the week counted as Claude Code's). The host sends its clock with the numbers, since the board has none: the times on the page are the computer's local time. `view usage` opens the page from the host.
 
+## The Tab5 anime theme
+
+![the dashboard in the anime theme, with made-up sessions](docs/images/anime-dashboard.png)
+
+The Tab5 has a second look, in the manner of the control-room screens of 90s mecha anime: an orange HUD on black, chamfered frames, hazard stripes, seven-segment clocks, every state named in Japanese next to its English. Work in progress is a turning reticle (処理 processing, 並列 with subagents out, 圧縮 compacting in grey). The states that want you are panels with a big kanji that flash as they come up: 警告 WARNING for a permission, 質問 QUESTION, 異常 ERROR in solid red. 待機 STANDBY runs its blocks down while a usage limit holds you, and 完了 COMPLETE ends the turn. Each tile has a number, the project, the state in Japanese, the state in English and the clock; the frame of a red tile blinks. The detail page, the usage page and the screensaver follow the theme.
+
+<p><img src="docs/images/anime-usage.png" width="49%" alt="the usage page in the anime theme"> <img src="docs/images/anime-detail.png" width="49%" alt="the detail page in the anime theme"></p>
+
+Switch with `theme anime` (or `theme classic`) on the serial port, or through the daemon:
+
+```powershell
+Invoke-RestMethod -Method Post 'http://localhost:47831/theme?name=anime'
+```
+
+The board stores the choice, so it survives restarts and updates. The fonts are Noto, under the SIL Open Font License (`components/monitor-core/fonts/OFL.txt`): extra-condensed Noto Sans for the English, Noto Sans Mono for data, Noto Sans JP and a squeezed Noto Serif JP Black for the Japanese. `tools/make-fonts.py` cuts them down to the characters the firmware draws, about 900 KB of flash. The AtomS3R keeps the classic icons: 128 pixels are too few for the texts.
+
 ## Claude Desktop
 
 The desktop app has three parts, and each one reaches the monitor differently:
@@ -293,6 +309,7 @@ Endpoints, all on `http://localhost:47831/`:
 | `GET /serial/status` | asks the device for its `STATUS` line and returns it |
 | `POST /state/<state>` | writes one state to the device (what `Send-ClaudeState.ps1` uses) |
 | `POST /calibrate?rot=1&sign=-1&offset=0` | stores the orientation calibration on the device (any subset) and returns its `STATUS`; `?reset=1` restores the compiled defaults |
+| `POST /theme?name=anime` | switches the Tab5 to the [anime theme](#the-tab5-anime-theme) (`name=classic` back) and returns its `STATUS`; the board stores it |
 | `POST /release[?seconds=120]` | closes the port so `idf.py` or the web flasher can write; reopens after the delay |
 | `POST /reconnect` | reopens the port now |
 | `GET /health` | `{"ok":true}` |
@@ -391,9 +408,9 @@ Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over 
 
 ## The Tab5 build, in more detail
 
-`firmware/tab5/` is the ESP-IDF project (`esp32p4`). `sdkconfig.defaults` carries what the board needs: 16 MB flash in QIO mode, PSRAM at 200 MHz (M5GFX refuses the MIPI-DSI panel below that, which in ESP-IDF 5.5 sits behind `CONFIG_IDF_EXPERIMENTAL_FEATURES`), the 256 KB L2 cache, a larger factory partition, and a 16 KB stack for the main task (everything is drawn from it; the 3.5 KB default overflowed). Every tile's canvas, the inspector's and the screensaver's card live in PSRAM. When no session lines have arrived (a manual test, an older daemon) a single placeholder tile follows the aggregate words the cube uses, and that is where the icon pictures above come from.
+`firmware/tab5/` is the ESP-IDF project (`esp32p4`). `sdkconfig.defaults` carries what the board needs: 16 MB flash in QIO mode, PSRAM at 200 MHz (M5GFX refuses the MIPI-DSI panel below that, which in ESP-IDF 5.5 sits behind `CONFIG_IDF_EXPERIMENTAL_FEATURES`), the 256 KB L2 cache, a 4 MB app partition (`partitions.csv`: the anime theme's fonts need the room; NVS stays where it was, so a stored calibration survives), and a 48 KB stack for the main task (everything is drawn from it; the 3.5 KB default overflowed, and M5GFX copies each glyph of a smooth font onto the stack, up to 28 KB for the anime theme's biggest kanji). Every tile's canvas, the inspector's and the screensaver's card live in PSRAM. When no session lines have arrived (a manual test, an older daemon) a single placeholder tile follows the aggregate words the cube uses, and that is where the icon pictures above come from.
 
-The screen dims when the host stops talking and switches off after thirty minutes of that; ten minutes with every tile idle bring the usage screensaver instead; a tap wakes it or brings the tiles back. A two-tone beep from the speaker marks a red icon appearing on a visible tile: rising for the `!`, falling for the `X`. Verified on a Tab5 with ESP32-P4 rev v1.3 and an ST7121 panel: the USB-C is the P4's USB Serial/JTAG, so it shows up like the AtomS3R ("USB Serial Device (COMx)", VID 303A PID 1001), `idf.py flash` works without touching any button, opening the port does not reset it, and the daemon recognises the board from its `VERSION` (`features=events,touch,rotate,sessions,usage`).
+The screen dims when the host stops talking and switches off after thirty minutes of that; ten minutes with every tile idle bring the usage screensaver instead; a tap wakes it or brings the tiles back. A two-tone beep from the speaker marks a red icon appearing on a visible tile: rising for the `!`, falling for the `X`. Verified on a Tab5 with ESP32-P4 rev v1.3 and an ST7121 panel: the USB-C is the P4's USB Serial/JTAG, so it shows up like the AtomS3R ("USB Serial Device (COMx)", VID 303A PID 1001), `idf.py flash` works without touching any button, opening the port does not reset it, and the daemon recognises the board from its `VERSION` (`features=events,touch,rotate,sessions,usage,theme`).
 
 ## Project layout
 
@@ -401,9 +418,11 @@ Everything that does not depend on the hardware is an ESP-IDF component; each bo
 
 ```
 claude-monitor/
-├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page
+├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page, both themes
 │   ├── include/monitor/*.h
 │   ├── src/*.cpp
+│   ├── fonts/                      # the anime theme's fonts (VLW, from tools/make-fonts.py) and their license
+│   ├── Kconfig                     # CONFIG_MONITOR_ANIME_THEME: embed those fonts (the Tab5 does)
 │   └── idf_component.yml           # m5stack/m5unified ^0.2
 ├── firmware/atoms3r/               # ESP-IDF project for the AtomS3R (esp32s3)
 │   ├── sdkconfig.defaults          # target esp32s3, 8 MB flash
@@ -411,7 +430,8 @@ claude-monitor/
 │   ├── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG, NVS calibration
 │   └── .vscode/                    # c_cpp_properties.json and launch.json (settings.json is not committed)
 ├── firmware/tab5/                  # ESP-IDF project for the Tab5 (esp32p4): tiles, detail page, touch, speaker
-│   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz
+│   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz, the anime theme
+│   ├── partitions.csv              # a 4 MB app partition
 │   └── main/main.cpp
 ├── host/
 │   ├── Monitor-Daemon.ps1          # the daemon: port owner, HTTP hook receiver, per-session state, process watching
@@ -420,7 +440,8 @@ claude-monitor/
 ├── tools/
 │   ├── collect-images.sh           # names and merges a build's images for a release (used by CI)
 │   ├── Get-Screenshot.ps1          # captures the Tab5's screen into a PNG over the serial port
-│   └── Make-ReadmeImages.ps1       # regenerates docs/images from the board
+│   ├── Make-ReadmeImages.ps1       # regenerates docs/images from the board
+│   └── make-fonts.py               # builds the anime theme's fonts from Noto (Pillow)
 ├── docs/
 │   ├── index.html                  # the web flasher page, published by CI with each release
 │   └── images/                     # the pictures in this README
@@ -437,7 +458,7 @@ claude-monitor/
 
 `firmware/*/.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port. Build output (`build/`, `managed_components/`, `sdkconfig`) is ignored too; `sdkconfig.defaults` is enough to recreate it.
 
-Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size.
+Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size. The anime theme's icons are built the same way, with its kanji and labels drawn in anti-aliased fonts on top; they stay upright, since the Tab5 turns its whole display instead.
 
 ## Tests and CI
 

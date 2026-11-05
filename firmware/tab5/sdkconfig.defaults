@@ -5,7 +5,12 @@
 CONFIG_IDF_TARGET="esp32p4"
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+# The anime theme's fonts take 900 KB: a 4 MB app partition instead of
+# the 1.5 MB of the single-app-large table, with room to spare (nvs stays
+# at 0x9000, so a stored calibration survives the change)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_MONITOR_ANIME_THEME=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_SPIRAM=y
@@ -15,5 +20,7 @@ CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_FREERTOS_HZ=1000
 # app_main draws everything (tiles, inspector, screensaver) through M5GFX:
 # the 3.5 KB default overflowed the moment the screensaver handed the
-# screen back ("Stack protection fault")
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+# screen back ("Stack protection fault"), and M5GFX copies a whole smooth-
+# font glyph onto the stack (alloca), 28 KB for the anime theme's 192 px
+# kanji, which overflowed 16 KB at boot
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=49152

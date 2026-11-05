@@ -119,6 +119,17 @@ private:
     // rotated
     void prepareBadge();
 
+    // The anime theme's icons (anime_icons.cpp). They are drawn upright:
+    // the theme is for the Tab5, which turns the whole display instead
+    enum class Panel { Warning, Question, Error, Done };
+    void animeReticle(float spin, GearStyle style);
+    void animePanel(Panel kind, float scale);
+    void animeStandby(const Hourglass& h);
+    void animeRing(float fraction, int lap);
+    void animeDots(std::string_view codes);
+    void animeLinkLost();
+    void animeToolMark();
+
     M5Canvas& canvas_;
     float unit_;        // canvas pixels per 128-space unit
     float cx_, cy_;     // canvas centre in pixels

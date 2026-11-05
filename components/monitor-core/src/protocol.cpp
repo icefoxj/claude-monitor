@@ -58,6 +58,16 @@ bool isAnimated(State s){
     return s == State::Processing || s == State::Compacting || s == State::Paused;
 }
 
+const char* themeName(Theme t){
+    return t == Theme::Anime ? "anime" : "classic";
+}
+
+bool parseTheme(std::string_view name, Theme& out){
+    if (name == "classic"){ out = Theme::Classic; return true; }
+    if (name == "anime"){ out = Theme::Anime; return true; }
+    return false;
+}
+
 ParsedCommand parseCommand(std::string_view line){
     ParsedCommand cmd;
 
@@ -140,6 +150,11 @@ ParsedCommand parseCommand(std::string_view line){
     }
     if (word == "usage"){
         cmd.kind = Command::Usage;
+        cmd.arg = std::string(arg);
+        return cmd;
+    }
+    if (word == "theme"){
+        cmd.kind = Command::Theme;
         cmd.arg = std::string(arg);
         return cmd;
     }

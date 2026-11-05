@@ -30,6 +30,18 @@ void drawUsageRows(M5Canvas& canvas, int x, int y, int w, int h,
 // "12 min", "3 h 05 min", "2 d 4 h"
 void usageDurationText(int32_t sec, char* out, size_t size);
 
+// "resets in 1 h 32 min", "resetting now", or empty when the reset is unknown
+void usageResetText(const UsageLimit& limit, int32_t elapsedSec, char* out, size_t size);
+
+// The texts under a bar on the usage page
+struct UsageDetailText {
+    char full[80]  = "";   // "resets Wed 07:00, in 20 h 33 min" ("resets in ..." without the host's clock)
+    char brief[40] = "";   // "resets Wed 07:00", for when the full one does not fit; empty: none
+    char pace[48]  = "";   // "on pace for 69%", "runs out Sat 15:20", "limit reached"; may be empty
+    int  tone      = 0;    // of the pace: 0 plain, 1 runs out before the reset, 2 limit reached
+};
+void usageDetailText(const UsageLimit& limit, const Usage& usage, int32_t elapsedSec, UsageDetailText& out);
+
 // Green under 50 %, amber under 80 %, red above, or worse when the account says so
 uint16_t usageLevelColor(float percent, const std::string& severity);
 

@@ -49,7 +49,7 @@ function Shot([string]$name, [string[]]$setup, [double]$wait, [int[]]$crop, [int
 }
 
 # ---- the icons, one at a time on the placeholder tile ----
-$clean = @('session_clear', 'usage none', 'view grid', 'sessions', 'subagent_stop', 'tool_stop')   # no usage tile: one tile, the crop above
+$clean = @('theme classic', 'session_clear', 'usage none', 'view grid', 'sessions', 'subagent_stop', 'tool_stop')   # no usage tile: one tile, the crop above
 Shot 'icon-processing' ($clean + 'idle' + 'processing') 1.5 $icon $iconWidth
 Shot 'icon-subagents'  @('idle', 'processing', 'subagent_start') 1.5 $icon $iconWidth
 Shot 'icon-tool'       @('subagent_stop', 'idle', 'processing', 'tool_start') 1.5 $icon $iconWidth
@@ -84,11 +84,11 @@ $events = @(
     "event PostToolUse${t}summary=PostToolUse/Read${t}${common}${t}hook_event_name=PostToolUse${t}tool_name=Read${t}tool_input.file_path=E:\work\api\src\server.ts${t}tool_response.type=text${t}tool_use_id=toolu_01",
     "event PreToolUse${t}summary=PreToolUse/Bash${t}${common}${t}hook_event_name=PreToolUse${t}tool_name=Bash${t}tool_input.command=npm test${t}tool_input.description=Run the test suite${t}tool_use_id=toolu_02"
 )
-Shot 'tab5-dashboard' (@('session_clear', 'ping') + $sessions) 4 $null 0
+Shot 'tab5-dashboard' (@('theme classic', 'session_clear', 'ping') + $sessions) 4 $null 0
 Shot 'tab5-detail'    ($events + 'view detail a1') 2 $null 0
 
 # ---- the screensaver, with the same made-up numbers ----
-Shot 'tab5-saver' @('view grid', 'ping', $usage, 'view saver') 2 $null 0
+Shot 'tab5-saver' @('theme classic', 'view grid', 'ping', $usage, 'view saver') 2 $null 0
 
 # ---- the usage page: the same numbers on a Thursday at 14:00, with the
 # week so far (work hours only), a plan, extra usage and five projects ----
@@ -101,10 +101,23 @@ $hours = foreach ($w in $weights) { $v += 63.0 * $w / $sum; [int][Math]::Round($
 $page = $usage + "${t}now=$now|0${t}windows=18000|604800|604800${t}plan=Max 5x|active|1771200000${t}extra=on|12.40|50.00|USD" +
         "${t}history=$start|3600|$($hours -join ',')" +
         "${t}project=api|14.2|2.1${t}project=web|9.6|1.4${t}project=infra|5.1|0.6${t}project=docs|2.4|0${t}project=mobile|1.5|0.3"
-Shot 'tab5-usage' @('view grid', 'ping', $page, 'view usage') 2 $null 0
+Shot 'tab5-usage' @('theme classic', 'view grid', 'ping', $page, 'view usage') 2 $null 0
 
-# ---- leave the board as we found it ----
+# ---- the same screens in the anime theme; the grid has a question and
+# an error in it, so each kind of panel shows ----
+$animeSessions = $sessions[0..1] + @(
+    "session d4${t}label=data${t}state=question${t}subagents=0${t}tool=0${t}project=data${t}root=E:\work\data",
+    "session e5${t}label=docs${t}state=idle${t}subagents=0${t}tool=0${t}project=docs${t}root=E:\work\docs",
+    "session g7${t}label=ml${t}state=error${t}subagents=0${t}tool=0${t}project=ml${t}root=E:\work\ml",
+    $usage
+)
+Shot 'anime-dashboard' (@('theme anime', 'view grid', 'session_clear', 'ping') + $animeSessions) 4 $null 0
+Shot 'anime-detail'    (@('theme anime') + $events + 'view detail a1') 2 $null 0
+Shot 'anime-saver'     @('theme anime', 'view grid', 'ping', $usage, 'view saver') 2 $null 0
+Shot 'anime-usage'     @('theme anime', 'view grid', 'ping', $page, 'view usage') 2 $null 0
+
+# ---- leave the board as we found it (in the classic theme) ----
 $done = Join-Path $OutDir 'cleanup.png'
-& $shot -PortName $PortName -OutFile $done -Setup @('view grid', 'usage none', 'session_clear', 'idle') | Out-Null
+& $shot -PortName $PortName -OutFile $done -Setup @('theme classic', 'view grid', 'usage none', 'session_clear', 'idle') | Out-Null
 Remove-Item -LiteralPath $done -Force -ErrorAction SilentlyContinue
 Get-ChildItem $OutDir -Filter *.png | ForEach-Object { "{0,-24} {1,7:N0} KB" -f $_.Name, ($_.Length / 1KB) }

@@ -4,6 +4,9 @@
 #include <cstring>
 #include <string>
 
+#include "monitor/anime.h"
+#include "monitor/theme.h"
+
 namespace monitor {
 
 namespace {
@@ -83,6 +86,11 @@ int EventView::drawWrapped(int x, int y, int width, const char* text, uint16_t c
 }
 
 void EventView::draw(const EventLog& log, const char* statusLine, int64_t nowMs){
+    if (animeTheme()){
+        anime::inspector(canvas_, log, statusLine, nowMs);
+        canvas_.pushSprite(pushX_, pushY_);
+        return;
+    }
     const int W = canvas_.width();
     const int H = canvas_.height();
     canvas_.fillSprite(kBg);

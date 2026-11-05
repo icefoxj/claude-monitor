@@ -94,6 +94,7 @@
       GET  /serial/<cmd>    write any protocol word; for "status" / "version" returns the reply
       GET  /version         ask the device who it is: board, model, chip, firmware, ESP-IDF, build, uptime, last reset
       POST /calibrate?rot=<0-3>&sign=<1|-1>&offset=<deg>   store the orientation on the device; ?reset=1 clears it
+      POST /theme?name=<classic|anime>   how the device draws (the Tab5); stored on the device
       GET  /status          daemon state, sessions, device state
       POST /release[?seconds=120]   close the port so idf.py can flash; reopens after the delay
       POST /reconnect       reopen the port now
@@ -212,14 +213,15 @@ function Read-SerialLines {
     return @()
 }
 
-# Writes a protocol line; for "status", "version" and "calibrate" waits
-# briefly for the device's reply (a STATUS or VERSION line, or ERROR for a
-# rejected calibration)
+# Writes a protocol line; for "status", "version", "calibrate" and "theme"
+# waits briefly for the device's reply (a STATUS or VERSION line, or ERROR
+# for a rejected calibration or a theme the board does not have)
 function Send-SerialCommand([string]$cmd) {
     $expect = switch -Wildcard ($cmd) {
         'status'     { 'STATUS' }
         'version'    { 'VERSION' }
         'calibrate*' { 'STATUS|ERROR' }
+        'theme*'     { 'STATUS|ERROR' }
         default      { $null }
     }
     if (-not (Send-Serial $cmd)) { return $null }
@@ -1941,6 +1943,15 @@ function Handle-Request($ctx) {
         $c = "calibrate $($fields -join ' ')"
         $reply = Send-SerialCommand $c
         Log "calibrate -> $c (reply: $reply)"
+        Send-Response $ctx 200 (@{ sent = $c; reply = $reply } | ConvertTo-Json -Compress)
+        return
+    }
+    if ($path -eq '/theme') {
+        $name = $req.QueryString['name']
+        if ($name -notin 'classic', 'anime') { Send-Response $ctx 400 '{"error":"name=classic or name=anime"}'; return }
+        $c = "theme $name"
+        $reply = Send-SerialCommand $c
+        Log "theme -> $c (reply: $reply)"
         Send-Response $ctx 200 (@{ sent = $c; reply = $reply } | ConvertTo-Json -Compress)
         return
     }

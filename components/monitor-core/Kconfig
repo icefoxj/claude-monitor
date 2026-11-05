@@ -1,0 +1,12 @@
+menu "claude-monitor"
+
+    config MONITOR_ANIME_THEME
+        bool "Anime theme (orange NERV-style HUD with Japanese captions)"
+        default n
+        help
+            Embeds the fonts of the "anime" theme (fonts/*.vlw, about 900 KB
+            of flash) so that "theme anime" can switch the views to it. Meant
+            for large panels (the Tab5); the drawing code is always built,
+            only the fonts depend on this.
+
+endmenu

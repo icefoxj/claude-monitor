@@ -54,6 +54,7 @@
 #include <string>
 #include <vector>
 
+#include "monitor/anime.h"
 #include "monitor/calibration.h"
 #include "monitor/eventlog.h"
 #include "monitor/eventview.h"
@@ -62,6 +63,7 @@
 #include "monitor/protocol.h"
 #include "monitor/screensaver.h"
 #include "monitor/screenshot.h"
+#include "monitor/theme.h"
 #include "monitor/tilt.h"
 #include "monitor/ui.h"
 #include "monitor/usage.h"
@@ -73,12 +75,13 @@ namespace {
 
 constexpr const char* TAG       = "monitor";
 constexpr const char* kBoard    = "tab5";
-constexpr const char* kFeatures = "events,touch,rotate,sessions,usage";
+constexpr const char* kFeatures = "events,touch,rotate,sessions,usage,theme";
 constexpr float kPi = 3.14159265f;
 
 constexpr int   kMaxSessions = 6;
 constexpr int   kTileGap     = 16;     // px between an icon and the tile's side
 constexpr float kIconScale   = 0.80f;  // the icon takes this much of the room the texts leave
+constexpr float kAnimeIconScale = 0.92f;   // in the anime theme, where the frame already keeps it apart
 constexpr int   kViewW       = 720;    // the inspector canvas on the detail page
 constexpr int   kViewH       = 720;
 
@@ -129,6 +132,44 @@ constexpr int kDefaultOffset = 3;
 constexpr int kDefaultSign   = 1;
 
 struct Rect { int x = 0, y = 0, w = 0, h = 0; bool contains(int px, int py) const { return px >= x && px < x + w && py >= y && py < y + h; } };
+
+// Where a tile's icon and its two text rows go. Classic: name band, icon
+// and clock band as one group centred in the tile. Anime: the rows at the
+// top and the bottom inside the tile's frame, the icon centred between
+struct Placement {
+    int iconSize, ix, iy, nameY, clockY;
+    int roomY, roomH;   // the band the icon sits in, for the usage tile's bars
+};
+
+Placement placeIn(const Rect& t, int band){
+    Placement p;
+    if (monitor::animeTheme()){
+        const int rowTop = monitor::anime::kTileInset + monitor::anime::kRowGap;
+        p.nameY  = t.y + rowTop + band / 2;
+        p.clockY = t.y + t.h - rowTop - band / 2;
+        const int top    = t.y + rowTop + band + monitor::anime::kRowGap;
+        const int bottom = t.y + t.h - rowTop - band - monitor::anime::kRowGap;
+        int room = bottom - top;
+        if (t.w - 2 * kTileGap - 2 * monitor::anime::kTileInset < room) room = t.w - 2 * kTileGap - 2 * monitor::anime::kTileInset;
+        p.iconSize = static_cast<int>(room * kAnimeIconScale) & ~1;
+        p.ix = t.x + (t.w - p.iconSize) / 2;
+        p.iy = top + (bottom - top - p.iconSize) / 2;
+        p.roomY = top;
+        p.roomH = bottom - top;
+    } else {
+        int room = t.h - 2 * band;
+        if (t.w - 2 * kTileGap < room) room = t.w - 2 * kTileGap;
+        p.iconSize = static_cast<int>(room * kIconScale) & ~1;
+        const int groupTop = t.y + (t.h - (2 * band + p.iconSize)) / 2;
+        p.ix = t.x + (t.w - p.iconSize) / 2;
+        p.iy = groupTop + band;
+        p.nameY  = groupTop + band / 2;
+        p.clockY = p.iy + p.iconSize + band / 2;
+        p.roomY = p.iy;
+        p.roomH = p.iconSize;
+    }
+    return p;
+}
 
 int64_t nowMs(){
     return esp_timer_get_time() / 1000;
@@ -302,15 +343,19 @@ extern "C" void app_main(void){
     cal.offsetDeg = 0.0f;
     const bool stored = nvsOK && monitor::loadCalibration(cal);
 
+    monitor::Theme theme = monitor::Theme::Classic;
+    if (nvsOK && monitor::loadTheme(theme)) monitor::setActiveTheme(theme);
+
     monitor::OrientationConfig orientCfg;
     orientCfg.offset = cal.rotation & 3;
     orientCfg.sign   = cal.sign < 0 ? -1 : 1;
     monitor::Orientation orient(orientCfg);
 
     bool imuOK = M5.Imu.isEnabled();
-    ESP_LOGI(TAG, "imu %s, speaker %s, orientation offset %d sign %d (%s)",
+    ESP_LOGI(TAG, "imu %s, speaker %s, orientation offset %d sign %d (%s), theme %s",
              imuOK ? "enabled" : "absent", M5.Speaker.isEnabled() ? "enabled" : "absent",
-             orientCfg.offset, orientCfg.sign, stored ? "from nvs" : "compiled");
+             orientCfg.offset, orientCfg.sign, stored ? "from nvs" : "compiled",
+             monitor::themeName(monitor::activeTheme()));
 
     float ax = 0.0f, ay = 0.0f, az = 0.0f;
     int rotation = 1;
@@ -345,7 +390,8 @@ extern "C" void app_main(void){
     bool  textDirty  = true;
     bool  viewDirty  = true;
     bool  pageDirty  = true;
-    Rect  detailLabel, detailClock;   // text bands on the detail page
+    Rect  detailCol;                  // the icon column on the detail page
+    Rect  detailLabel, detailClock;   // its text bands
     TextStyle style = textStyleFor(720);   // for the layout on screen
 
     // The plan usage the host sent, and its tile: the last cell of the grid,
@@ -405,18 +451,12 @@ extern "C" void app_main(void){
             // The icon column is 560 wide in landscape (720 tall), 720 wide
             // and 560 tall in portrait: name band, icon, clock band
             style = textStyleFor(720);
-            int colX, colY, colW, colH;
-            if (landscape){ colX = 0;  colY = 0;  colW = 560; colH = 720; inspector.setOrigin(560, 0); }
-            else          { colX = 0;  colY = 0;  colW = 720; colH = 560; inspector.setOrigin(0, 560); }
-            int room = colH - 2 * style.band;
-            if (colW - 2 * kTileGap < room) room = colW - 2 * kTileGap;
-            int iconSize = static_cast<int>(room * kIconScale) & ~1;
-            int groupTop = colY + (colH - (2 * style.band + iconSize)) / 2;
-            int ix = colX + (colW - iconSize) / 2;
-            int iy = groupTop + style.band;
-            detailLabel = { colX, groupTop, colW, style.band };
-            detailClock = { colX, iy + iconSize, colW, style.band };
-            detail->place(iconSize, ix, iy);
+            if (landscape){ detailCol = { 0, 0, 560, 720 }; inspector.setOrigin(560, 0); }
+            else          { detailCol = { 0, 0, 720, 560 }; inspector.setOrigin(0, 560); }
+            const Placement p = placeIn(detailCol, style.band);
+            detailLabel = { detailCol.x, p.nameY - style.band / 2, detailCol.w, style.band };
+            detailClock = { detailCol.x, p.clockY - style.band / 2, detailCol.w, style.band };
+            detail->place(p.iconSize, p.ix, p.iy);
             detail->ui.setVisible(true);
             detail->ui.redraw();
             usageShown = false;
@@ -448,18 +488,13 @@ extern "C" void app_main(void){
             const int tw = W / cols;
             const int th = H / rows;
             style = textStyleFor(th);
-            int room = th - 2 * style.band;
-            if (tw - 2 * kTileGap < room) room = tw - 2 * kTileGap;
-            int iconSize = static_cast<int>(room * kIconScale) & ~1;
             for (int i = 0; i < sessions; i++){
                 Slot* s = vis[i];
                 s->tile = { (i % cols) * tw, (i / cols) * th, tw, th };
-                int groupTop = s->tile.y + (th - (2 * style.band + iconSize)) / 2;
-                int ix = s->tile.x + (tw - iconSize) / 2;
-                int iy = groupTop + style.band;
-                s->nameY  = groupTop + style.band / 2;
-                s->clockY = iy + iconSize + style.band / 2;
-                s->place(iconSize, ix, iy);
+                const Placement p = placeIn(s->tile, style.band);
+                s->nameY  = p.nameY;
+                s->clockY = p.clockY;
+                s->place(p.iconSize, p.ix, p.iy);
                 s->ui.setVisible(true);
                 s->ui.redraw();
             }
@@ -470,10 +505,10 @@ extern "C" void app_main(void){
             if (withUsage){
                 const int i = sessions;
                 usageTile = { (i % cols) * tw, (i / cols) * th, tw, th };
-                int groupTop = usageTile.y + (th - (2 * style.band + iconSize)) / 2;
-                usageNameY = groupTop + style.band / 2;
-                usageAgeY  = groupTop + style.band + iconSize + style.band / 2;
-                usageBox   = { usageTile.x + 2 * kTileGap, groupTop + style.band, tw - 4 * kTileGap, iconSize };
+                const Placement p = placeIn(usageTile, style.band);
+                usageNameY = p.nameY;
+                usageAgeY  = p.clockY;
+                usageBox   = { usageTile.x + 2 * kTileGap, p.roomY, tw - 4 * kTileGap, p.roomH };
                 if (usageCanvas.width() != usageBox.w || usageCanvas.height() != usageBox.h){
                     usageCanvas.deleteSprite();
                     usageCanvas.setPsram(true);
@@ -487,6 +522,31 @@ extern "C" void app_main(void){
         textDirty = true;
     };
 
+    // The anime theme's chrome around a session's tile (or the detail
+    // page's icon column): frame, number, name and state in the header,
+    // the state in English and the clock in the footer; the frame of a red
+    // state blinks with the once-a-second redraw
+    auto animeTile = [&](const Rect& r, int nameY, int clockY, int number, Slot* s) {
+        const monitor::State st = s->ui.state();
+        const monitor::anime::Look lk = monitor::anime::look(st);
+        const bool alert = st == monitor::State::WaitingUser || st == monitor::State::Error;
+        char index[12], clock[16];
+        snprintf(index, sizeof(index), "%02d", number);
+        clockText(s->ui.framesInState(), clock, sizeof(clock));
+        monitor::anime::Tile t;
+        t.x = r.x; t.y = r.y; t.w = r.w; t.h = r.h;
+        t.headY = nameY; t.footY = clockY; t.band = style.band;
+        t.index = index;
+        t.name  = s->label.c_str();
+        t.jp    = lk.jp;
+        t.en    = lk.en;
+        t.color = lk.color;
+        t.frameColor = alert ? ((nowMs() / 1000) % 2 ? lk.color : lk.dark)
+                             : (st == monitor::State::Question ? lk.color : monitor::anime::kOrangeDim);
+        t.clock = clock;
+        monitor::anime::drawTile(M5.Display, t);
+    };
+
     // The usage tile: the bars, then its name and the age of the numbers
     auto drawUsageTile = [&]() {
         if (!usageShown || usageCanvas.width() == 0) return;
@@ -494,6 +554,21 @@ extern "C" void app_main(void){
         usageCanvas.fillScreen(TFT_BLACK);
         monitor::drawUsageRows(usageCanvas, 0, 0, usageBox.w, usageBox.h, usage, elapsed, TFT_BLACK);
         usageCanvas.pushSprite(usageBox.x, usageBox.y);
+        if (monitor::animeTheme()){
+            char age[40];
+            monitor::usageAgeText(usage.ageSec + elapsed, age, sizeof(age));
+            const std::string note = monitor::anime::upper(age);
+            monitor::anime::Tile t;
+            t.x = usageTile.x; t.y = usageTile.y; t.w = usageTile.w; t.h = usageTile.h;
+            t.headY = usageNameY; t.footY = usageAgeY; t.band = style.band;
+            t.index = "U";
+            t.name  = "Claude usage";
+            t.jp    = "使用状況";
+            t.en    = "PLAN LIMITS";
+            t.note  = note.c_str();
+            monitor::anime::drawTile(M5.Display, t);
+            return;
+        }
         const int32_t age = usage.ageSec + elapsed;
         char ageText[24];
         if (age < 90)        snprintf(ageText, sizeof(ageText), "just now");
@@ -507,6 +582,18 @@ extern "C" void app_main(void){
     auto drawTexts = [&]() {
         char clock[16];
         if (view == View::Usage) return;   // the page has its own
+        if (monitor::animeTheme()){
+            if (view == View::Detail && detail){
+                int number = 1;
+                for (Slot* s : visibleSlots()){ if (s == detail) break; ++number; }
+                animeTile(detailCol, detailLabel.y + detailLabel.h / 2, detailClock.y + detailClock.h / 2, number, detail);
+            } else {
+                int number = 1;
+                for (Slot* s : visibleSlots()) animeTile(s->tile, s->nameY, s->clockY, number++, s);
+                drawUsageTile();
+            }
+            return;
+        }
         if (view == View::Detail && detail){
             clockText(detail->ui.framesInState(), clock, sizeof(clock));
             drawCentred(detail->label.c_str(), detailLabel.x + detailLabel.w / 2, detailLabel.y + detailLabel.h / 2,
@@ -579,11 +666,11 @@ extern "C" void app_main(void){
         const char* link = !armed ? "unarmed" : (lost ? "lost" : "ok");
         char usage[32];
         saver.summary(usage, sizeof(usage));
-        char msg[360];
+        char msg[384];
         int n = snprintf(msg, sizeof(msg),
                          "STATUS state=%s subagents=0 rot=%u angle=%.1f ax=%.2f ay=%.2f az=%.2f"
                          " fw=%s board=%s sign=%d offset=%d sessions=%s link=%s work=%d screen=%s tool=%d"
-                         " events=%d sector=%d tiles=%d view=%s usage=%s\n",
+                         " events=%d sector=%d tiles=%d view=%s usage=%s theme=%s\n",
                          monitor::stateName(agg), M5.Display.getRotation(),
                          atan2f(ay, ax) * 180.0f / kPi, ax, ay, az,
                          esp_app_get_description()->version, kBoard,
@@ -591,7 +678,8 @@ extern "C" void app_main(void){
                          codes.empty() ? "-" : codes.c_str(), link, work,
                          saver.active() ? "saver" : screenName(brightness), tool ? 1 : 0,
                          events, orient.sector(), static_cast<int>(visibleSlots().size()),
-                         saver.active() ? "saver" : (view == View::Detail ? "detail" : (view == View::Usage ? "usage" : "grid")), usage);
+                         saver.active() ? "saver" : (view == View::Detail ? "detail" : (view == View::Usage ? "usage" : "grid")), usage,
+                         monitor::themeName(monitor::activeTheme()));
         writeLine(msg, n);
     };
 
@@ -661,7 +749,8 @@ extern "C" void app_main(void){
             }
             auto cmd = monitor::parseCommand(line);
             const bool query = cmd.kind == monitor::Command::Status || cmd.kind == monitor::Command::Version
-                            || cmd.kind == monitor::Command::Screenshot || cmd.kind == monitor::Command::View;
+                            || cmd.kind == monitor::Command::Screenshot || cmd.kind == monitor::Command::View
+                            || cmd.kind == monitor::Command::Theme;
             if (!query){   // a query is not a sign of life from the state feed
                 for (auto& s : slots) s.ui.noteCommand();
                 placeholder.ui.noteCommand();
@@ -777,6 +866,24 @@ extern "C" void app_main(void){
                     }
                     monitor::dumpDisplay(M5.Display, writeAll);
                     break;
+                case monitor::Command::Theme: {
+                    // "theme classic" / "theme anime": stored, everything redrawn
+                    monitor::Theme t;
+                    if (!monitor::parseTheme(cmd.arg, t) || !monitor::themeAvailable(t)){
+                        static const char kUsage[] = "ERROR theme: expected classic or anime\n";
+                        writeLine(kUsage, sizeof(kUsage) - 1);
+                        break;
+                    }
+                    if (t != monitor::activeTheme()){
+                        monitor::setActiveTheme(t);
+                        const bool saved = nvsOK && monitor::saveTheme(t);
+                        ESP_LOGI(TAG, "theme %s (%s)", monitor::themeName(t), saved ? "stored" : "not stored");
+                        relayout = true;   // every tile and page draws again (and the saver steps aside)
+                        textDirty = viewDirty = pageDirty = true;
+                    }
+                    sendStatus(brightness);
+                    break;
+                }
                 case monitor::Command::Ping:
                     for (auto& s : slots) s.ui.ping();
                     placeholder.ui.ping();

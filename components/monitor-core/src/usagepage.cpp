@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "monitor/anime.h"
+#include "monitor/theme.h"
 #include "monitor/usageview.h"
 
 namespace monitor {
@@ -67,6 +69,11 @@ void percentText(float p, char* out, size_t size){
 void UsagePage::draw(const Usage& usage, int32_t elapsedSec){
     const int W = c_.width(), H = c_.height();
     if (W <= 0 || H <= 0) return;
+    if (animeTheme()){
+        anime::usagePage(c_, usage, elapsedSec);
+        push();
+        return;
+    }
     c_.fillScreen(kBg);
 
     const int rows = usageRowCount(usage);
@@ -98,6 +105,11 @@ void UsagePage::draw(const Usage& usage, int32_t elapsedSec){
     drawPlan(usage, plan);
     drawChart(usage, elapsedSec, chart);
     drawProjects(usage, projects);
+    push();
+}
+
+void UsagePage::push(){
+    const int W = c_.width(), H = c_.height();
     LovyanGFX* dst = c_.getParent();
     for (int y = 0; y < H; y += kPushBand){
         dst->setClipRect(0, y, W, kPushBand < H - y ? kPushBand : H - y);
@@ -122,9 +134,40 @@ void UsagePage::drawHeader(const Usage& usage, int32_t elapsedSec, const Box& b)
     c_.drawFastHLine(b.x, b.y + b.h + 4, b.w, kRule);
 }
 
+bool usagePlanText(const Usage& usage, std::string& out, int& tone){
+    if (usage.plan.name.empty()) return false;
+    out = usage.plan.name;
+    std::string status = usage.plan.status;
+    for (char& ch : status) if (ch == '_') ch = ' ';
+    char since[32];
+    usageDateText(usage, usage.plan.since, since, sizeof(since));
+    if (!status.empty() && since[0]) out += ", " + status + " since " + since;
+    else if (!status.empty())        out += ", " + status;
+    tone = status.empty() || status == "active" ? 0 : 1;
+    return true;
+}
+
+bool usageExtraText(const Usage& usage, std::string& out, int& tone){
+    const UsageExtra& e = usage.extra;
+    if (e.state.empty()) return false;
+    tone = 0;
+    if (e.state == "off"){
+        out = "off";
+        tone = -1;
+    } else if (!e.limit.empty()){
+        out = money(e.used, e.currency) + " of " + money(e.limit, e.currency) + " this month";
+        if (e.state == "full"){ out += ", limit reached"; tone = 2; }
+    } else {
+        out = money(e.used.empty() ? "0" : e.used, e.currency) + " this month, no limit";
+    }
+    return true;
+}
+
 void UsagePage::drawPlan(const Usage& usage, const Box& b){
-    const bool havePlan = !usage.plan.name.empty();
-    const bool haveExtra = !usage.extra.state.empty();
+    std::string plan, extra;
+    int planTone = 0, extraTone = 0;
+    const bool havePlan = usagePlanText(usage, plan, planTone);
+    const bool haveExtra = usageExtraText(usage, extra, extraTone);
     if (!havePlan && !haveExtra) return;
     c_.drawFastHLine(b.x, b.y, b.w, kRule);
 
@@ -141,32 +184,9 @@ void UsagePage::drawPlan(const Usage& usage, const Box& b){
         c_.drawString(fit(c_, value, b.w - labelW).c_str(), b.x + labelW, y + 14);
         y += 38;
     };
-
-    if (havePlan){
-        std::string v = usage.plan.name;
-        std::string status = usage.plan.status;
-        for (char& ch : status) if (ch == '_') ch = ' ';
-        char since[32];
-        usageDateText(usage, usage.plan.since, since, sizeof(since));
-        if (!status.empty() && since[0]) v += ", " + status + " since " + since;
-        else if (!status.empty())        v += ", " + status;
-        row("Plan", v, status.empty() || status == "active" ? kText : kAmber);
-    }
-    if (haveExtra){
-        const UsageExtra& e = usage.extra;
-        std::string v;
-        uint16_t color = kText;
-        if (e.state == "off"){
-            v = "off";
-            color = kDim;
-        } else if (!e.limit.empty()){
-            v = money(e.used, e.currency) + " of " + money(e.limit, e.currency) + " this month";
-            if (e.state == "full"){ v += ", limit reached"; color = kRed; }
-        } else {
-            v = money(e.used.empty() ? "0" : e.used, e.currency) + " this month, no limit";
-        }
-        row("Extra usage", v, color);
-    }
+    auto toneColor = [](int tone) { return tone < 0 ? kDim : (tone == 2 ? kRed : (tone == 1 ? kAmber : kText)); };
+    if (havePlan) row("Plan", plan, toneColor(planTone));
+    if (haveExtra) row("Extra usage", extra, toneColor(extraTone));
 }
 
 void UsagePage::dashedLine(int x0, int y0, int x1, int y1, uint16_t color){
@@ -182,7 +202,8 @@ void UsagePage::dashedLine(int x0, int y0, int x1, int y1, uint16_t color){
     }
 }
 
-void UsagePage::drawChart(const Usage& usage, int32_t elapsedSec, const Box& b){
+bool usageChart(const Usage& usage, int32_t elapsedSec, UsageChart& out){
+    out = UsageChart{};
     // The weekly limit the history belongs to: the first 7-day window that
     // starts where the history does (else the first 7-day one; the per-model
     // weeks share the window and come after it)
@@ -203,14 +224,12 @@ void UsagePage::drawChart(const Usage& usage, int32_t elapsedSec, const Box& b){
     } else if (start != 0){
         end = start + kWeekSec;
     } else {
-        return;   // nothing to draw a week from
+        return false;
     }
     const int64_t now = sent ? sent + elapsedSec : start + static_cast<int64_t>(usage.history.values.size() > 0
                                                        ? (usage.history.values.size() - 1) * usage.history.step : 0);
 
-    // The points: 0 at the start, the readings, the current percentage now
-    struct Pt { int64_t t; float v; };
-    std::vector<Pt> pts;
+    std::vector<UsageChart::Point>& pts = out.points;
     pts.push_back({ start, 0.0f });
     for (size_t i = 0; i < usage.history.values.size(); i++){
         const int16_t v = usage.history.values[i];
@@ -219,13 +238,43 @@ void UsagePage::drawChart(const Usage& usage, int32_t elapsedSec, const Box& b){
         pts.push_back({ t, static_cast<float>(v) });
     }
     if (week && now > pts.back().t) pts.push_back({ now, week->percent });
-    const bool noHistory = usage.history.values.size() < 2;
 
     float maxV = 100.0f;
-    for (const Pt& p : pts) if (p.v > maxV) maxV = p.v;
-    UsagePace pace;
-    if (week) pace = usagePace(*week, elapsedSec);
-    const float yMax = ceilf(maxV / 25.0f) * 25.0f;
+    for (const UsageChart::Point& p : pts) if (p.v > maxV) maxV = p.v;
+    out.week = week;
+    out.start = start;
+    out.end = end;
+    out.now = now;
+    if (week) out.pace = usagePace(*week, elapsedSec);
+    out.yMax = ceilf(maxV / 25.0f) * 25.0f;
+    out.noHistory = usage.history.values.size() < 2;
+    return true;
+}
+
+float usageChartValue(const UsageChart& chart, int64_t t){
+    const std::vector<UsageChart::Point>& pts = chart.points;
+    if (pts.empty()) return 0.0f;
+    if (t <= pts.front().t) return pts.front().v;
+    for (size_t i = 0; i + 1 < pts.size(); i++){
+        const UsageChart::Point& a = pts[i];
+        const UsageChart::Point& b = pts[i + 1];
+        if (t <= b.t){
+            const float f = b.t > a.t ? static_cast<float>(t - a.t) / static_cast<float>(b.t - a.t) : 1.0f;
+            return a.v + (b.v - a.v) * f;
+        }
+    }
+    return pts.back().v;
+}
+
+void UsagePage::drawChart(const Usage& usage, int32_t elapsedSec, const Box& b){
+    UsageChart chart;
+    if (!usageChart(usage, elapsedSec, chart)) return;   // nothing to draw a week from
+    const UsageLimit* week = chart.week;
+    const int64_t start = chart.start, end = chart.end, now = chart.now;
+    const std::vector<UsageChart::Point>& pts = chart.points;
+    const UsagePace& pace = chart.pace;
+    const float yMax = chart.yMax;
+    const int64_t sent = usage.nowUnix;
 
     // Title and legend
     c_.setTextDatum(textdatum_t::top_left);
@@ -289,18 +338,9 @@ void UsagePage::drawChart(const Usage& usage, int32_t elapsedSec, const Box& b){
     // The usage so far: filled underneath, then the line on top
     const int xNow = X(pts.back().t);
     std::vector<int> ys;
-    size_t seg = 0;
     for (int x = px; x <= xNow; x++){
         const int64_t t = start + static_cast<int64_t>(static_cast<double>(x - px) * (end - start) / pw);
-        while (seg + 1 < pts.size() - 1 && pts[seg + 1].t < t) seg++;
-        float v = pts.back().v;
-        if (pts.size() > 1 && seg + 1 < pts.size()){
-            const Pt& a = pts[seg];
-            const Pt& c = pts[seg + 1];
-            const float f = c.t > a.t ? static_cast<float>(t - a.t) / static_cast<float>(c.t - a.t) : 1.0f;
-            v = a.v + (c.v - a.v) * (f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f));
-        }
-        ys.push_back(Y(v));
+        ys.push_back(Y(usageChartValue(chart, t)));
     }
     const uint16_t fill = darker(curveColor);
     for (size_t i = 0; i < ys.size(); i++){
@@ -341,7 +381,7 @@ void UsagePage::drawChart(const Usage& usage, int32_t elapsedSec, const Box& b){
         c_.fillCircle(xNow, yNow, 8, kBg);
         c_.fillCircle(xNow, yNow, 6, curveColor);
     }
-    if (noHistory){
+    if (chart.noHistory){
         c_.setFont(&fonts::DejaVu12);
         c_.setTextDatum(textdatum_t::top_left);
         c_.setTextColor(kDim, kBg);

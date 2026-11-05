@@ -133,7 +133,20 @@ void testParseCommand(){
     CHECK(parseCommand("view usage").arg == "usage");
     CHECK(parseCommand("usage none").kind == Command::Usage);
     CHECK(parseCommand("usage account\tage=12").arg == "account\tage=12");
-    CHECK(kProtocolVersion == 8);
+    CHECK(parseCommand("theme anime").kind == Command::Theme);
+    CHECK(parseCommand("theme anime").arg == "anime");
+    CHECK(parseCommand("theme").kind == Command::Theme);
+    CHECK(parseCommand("theme").arg.empty());
+    {
+        Theme t = Theme::Anime;
+        CHECK(parseTheme("classic", t) && t == Theme::Classic);
+        CHECK(parseTheme("anime", t) && t == Theme::Anime);
+        CHECK(!parseTheme("nerv", t) && t == Theme::Anime);
+        CHECK(!parseTheme("", t));
+        CHECK(std::string(themeName(Theme::Anime)) == "anime");
+        CHECK(std::string(themeName(Theme::Classic)) == "classic");
+    }
+    CHECK(kProtocolVersion == 9);
 
     ParsedCommand se = parseCommand("session 33db5bf1-e7eb\tlabel=claude-monitor\tstate=waiting_user\tsubagents=0\ttool=1");
     CHECK(se.kind == Command::Session);

@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdio>
 
+#include "monitor/anime.h"
+#include "monitor/theme.h"
 #include "monitor/usageview.h"
 
 namespace monitor {
@@ -133,11 +135,16 @@ void UsageSaver::render(int64_t nowMs){
     renderedMs_ = nowMs;
     if (card_.width() == 0) return;
 
+    const int32_t elapsed = static_cast<int32_t>((nowMs - receivedMs_) / 1000);
+    if (animeTheme()){
+        anime::saverCard(card_, kEdge, kEdge, kWidth, cardHeight(rows_), kPad, kHeader,
+                         usage_, elapsed, have_ && !usage_.limits.empty());
+        return;
+    }
     card_.fillScreen(TFT_BLACK);
     card_.fillRoundRect(kEdge, kEdge, kWidth, cardHeight(rows_), 20, kCardBg);
     const int x0 = kEdge + kPad;
     const int x1 = kEdge + kWidth - kPad;
-    const int32_t elapsed = static_cast<int32_t>((nowMs - receivedMs_) / 1000);
 
     int y = kEdge + 22;
     card_.setTextDatum(textdatum_t::top_left);
