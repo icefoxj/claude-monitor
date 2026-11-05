@@ -90,25 +90,21 @@ int wrapped(LovyanGFX& g, const std::string& s, int x, int y, int width, Face fa
 
 }  // namespace
 
-// ---------------- a tile's chrome ----------------
+// ---------------- a tile's rows ----------------
 
 void drawTile(LovyanGFX& g, const Tile& t){
-    const int pad = kTileInset + kRowGap;
-    const int x0 = t.x + pad, x1 = t.x + t.w - pad;
-    // The rows' old texts go, then the frame, then the new texts
-    g.fillRect(t.x + kTileInset, t.headY - t.band / 2, t.w - 2 * kTileInset, t.band, kBg);
-    g.fillRect(t.x + kTileInset, t.footY - t.band / 2, t.w - 2 * kTileInset, t.band, kBg);
-    const int cut = t.band / 2;
-    frame(g, t.x + 4, t.y + 4, t.w - 8, t.h - 8, cut, 2, t.frameColor);
-    // Brighter stretches by the cut corners
-    g.fillRect(t.x + 4 + cut, t.y + 4, t.band * 2, 4, t.frameColor);
-    g.fillRect(t.x + t.w - 4 - cut - t.band * 2, t.y + t.h - 8, t.band * 2, 4, t.frameColor);
-
+    const int x0 = t.x + kTilePad, x1 = t.x + t.w - kTilePad;
     const int px = t.band * 60 / 100;
+    const int tagH = t.band * 72 / 100;
+    const int segH = t.band * 66 / 100;
+
+    // The rows' old texts go first
+    g.fillRect(t.x, t.headY - t.band / 2, t.w, t.band, kBg);
+    g.fillRect(t.x, t.footY - t.band / 2, t.w, t.band, kBg);
+
     int nx = x0;
     if (t.index){
-        const int th = t.band * 72 / 100;
-        nx += tag(g, x0, t.headY - th / 2, th, t.index, Face::Mono, th - 6, kBg, t.color) + 10;
+        nx += tag(g, x0, t.headY - tagH / 2, tagH, t.index, Face::Mono, tagH - 6, kBg, t.tagColor) + 10;
     }
     int jpW = 0;
     if (t.jp && t.jp[0]){
@@ -119,8 +115,9 @@ void drawTile(LovyanGFX& g, const Tile& t){
 
     int rightW = 0;
     if (t.clock){
-        const int segH = t.band * 66 / 100;
-        rightW = sevenSeg(g, t.clock, x1, t.footY - segH / 2, segH, t.color, shade(t.color, 16), true);
+        // Leaning digits reach a little right of where they are placed
+        const int lean = segH / 10 + 1;
+        rightW = sevenSeg(g, t.clock, x1 - lean, t.footY - segH / 2, segH, t.color, shade(t.color, 16), true) + lean;
     } else if (t.note){
         rightW = text(g, t.note, x1, t.footY, Face::Mono, t.band * 42 / 100, kOrangeDim, textdatum_t::middle_right, kBg);
     }
@@ -234,15 +231,17 @@ void usageRows(M5Canvas& c, int x, int y, int w, int h, const Usage& usage,
             if (!t.brief[0] || textWidth(c, left.c_str(), Face::Mono, st->smallPx) > w - paceW){
                 if (t.brief[0]) left = upper(t.brief);
             }
-            text(c, left.c_str(), x, top + st->resetY, Face::Mono, st->smallPx, kOrangeDim);
+            // The line in the bar's colour, but a warning in its own
+            text(c, left.c_str(), x, top + st->resetY, Face::Mono, st->smallPx, level);
             if (!pace.empty()){
-                const uint16_t pc = t.tone == 2 ? kRed : (t.tone == 1 ? kAmber : kOrangeDim);
+                const uint16_t pc = t.tone == 2 ? kRed : (t.tone == 1 ? kAmber : level);
                 text(c, pace.c_str(), x + w, top + st->resetY, Face::Mono, st->smallPx, pc, textdatum_t::top_right);
             }
         } else if (st->smallPx){
+            // In the bar's colour: dim orange was too dark to read
             char reset[48];
             usageResetText(l, elapsedSec, reset, sizeof(reset));
-            if (reset[0]) text(c, upper(reset).c_str(), x, top + st->resetY, Face::Mono, st->smallPx, kOrangeDim);
+            if (reset[0]) text(c, upper(reset).c_str(), x, top + st->resetY, Face::Mono, st->smallPx, level);
         }
         top += st->rowH;
     }
@@ -403,11 +402,13 @@ void usagePage(M5Canvas& c, const Usage& usage, int32_t elapsedSec){
     // a ruled line under it
     const int w1 = text(c, "使用状況", kMargin, 42, Face::Mincho, 50, kText, textdatum_t::middle_left);
     text(c, "CLAUDE USAGE MONITOR", kMargin + w1 + 18, 48, Face::Cond, 26, kOrange, textdatum_t::middle_left, -1, 3);
+    const UsageSwitch sw = usageThemeSwitch(W);
     char age[40];
     usageAgeText(usage.ageSec + elapsedSec, age, sizeof(age));
-    text(c, upper(age).c_str(), W - kMargin, 48, Face::Mono, 20, kOrangeDim, textdatum_t::middle_right);
+    text(c, upper(age).c_str(), sw.x - 24, 48, Face::Mono, 20, kOrangeDim, textdatum_t::middle_right);
     c.fillRect(kMargin, 76, 220, 4, kOrange);
     rule(c, kMargin, 79, W - 2 * kMargin, kOrangeDim, kOrangeDark);
+    drawThemeSwitch(c, sw);
 
     const int top = 100;
     const int rows = usageRowCount(usage);

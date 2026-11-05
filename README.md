@@ -75,7 +75,7 @@ With `-AccountUsage` the card and the tile end with one more row, **This week by
 
 ![the usage page, with made-up numbers](docs/images/tab5-usage.png)
 
-A tap on the usage tile opens a page with everything the daemon knows about your plan; a tap anywhere goes back.
+A tap on the usage tile opens a page with everything the daemon knows about your plan; a tap anywhere goes back, except on the icon in the top-right corner, which switches between the classic look and the [anime theme](#the-tab5-anime-theme).
 
 - **Every limit in full.** The rows of the tile, at full size, with a white tick on each bar where an even pace would have it by now: a bar past its tick is ahead of pace. Under each bar, the reset as a clock time and how far off it is (`resets Wed 07:00, in 20 h 33 min`), and where the usage ends up at the reset if it keeps the pace it had so far (`on pace for 69%`), or, when that passes 100 %, the moment it runs out (`runs out Sat 15:20`, in amber).
 - **The week as a chart**: the weekly limit hour by hour since its window started, the even-pace diagonal, and a dashed projection to the reset. The daemon keeps every reading of the weekly limit in `%LOCALAPPDATA%\claude-monitor\usage-history.jsonl` (a line when it changes, otherwise one an hour; 35 days are kept) and, the first time, fills in the current week from its own log.
@@ -88,11 +88,11 @@ The limits, the extra usage and the week by app come from the `-AccountUsage` po
 
 ![the dashboard in the anime theme, with made-up sessions](docs/images/anime-dashboard.png)
 
-The Tab5 has a second look, in the manner of the control-room screens of 90s mecha anime: an orange HUD on black, chamfered frames, hazard stripes, seven-segment clocks, every state named in Japanese next to its English. Work in progress is a turning reticle (処理 processing, 並列 with subagents out, 圧縮 compacting in grey). The states that want you are panels with a big kanji that flash as they come up: 警告 WARNING for a permission, 質問 QUESTION, 異常 ERROR in solid red. 待機 STANDBY runs its blocks down while a usage limit holds you, and 完了 COMPLETE ends the turn. Each tile has a number, the project, the state in Japanese, the state in English and the clock; the frame of a red tile blinks. The detail page, the usage page and the screensaver follow the theme.
+The Tab5 has a second look, in the manner of the control-room screens of 90s mecha anime: an orange HUD on black, chamfered frames, hazard stripes, seven-segment clocks, every state named in Japanese next to its English. Work in progress is a turning reticle (処理 processing, 並列 with subagents out, 圧縮 compacting in grey). The states that want you are panels with a big kanji that flash as they come up: 警告 WARNING for a permission, 質問 QUESTION, 異常 ERROR in solid red. 待機 STANDBY runs its blocks down while a usage limit holds you, and 完了 COMPLETE ends the turn. Each tile has a number, the project, the state in Japanese, the state in English and the clock, with no frame around it; a red tile's number blinks. The detail page, the usage page and the screensaver follow the theme.
 
 <p><img src="docs/images/anime-usage.png" width="49%" alt="the usage page in the anime theme"> <img src="docs/images/anime-detail.png" width="49%" alt="the detail page in the anime theme"></p>
 
-Switch with `theme anime` (or `theme classic`) on the serial port, or through the daemon:
+Switch with the icon in the top-right corner of the usage page (half classic grey, half anime orange), with `theme anime` (or `theme classic`) on the serial port, or through the daemon:
 
 ```powershell
 Invoke-RestMethod -Method Post 'http://localhost:47831/theme?name=anime'

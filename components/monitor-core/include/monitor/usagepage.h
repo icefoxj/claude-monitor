@@ -45,11 +45,29 @@ float usageChartValue(const UsageChart& chart, int64_t t);
 bool usagePlanText(const Usage& usage, std::string& out, int& tone);
 bool usageExtraText(const Usage& usage, std::string& out, int& tone);
 
+// The theme switch in the page's top-right corner: the icon, and the
+// corner a tap on it counts in (larger than the icon: a fingertip covers
+// more than its 56 px)
+struct UsageSwitch {
+    int x = 0, y = 0, size = 0;                  // the icon
+    int hitX = 0, hitY = 0, hitW = 0, hitH = 0;  // where a tap switches
+    bool contains(int px, int py) const { return px >= hitX && px < hitX + hitW && py >= hitY && py < hitY + hitH; }
+};
+UsageSwitch usageThemeSwitch(int pageWidth);
+
+// The icon in the current theme's look: a square cut along its diagonal
+// into the two looks, the classic's grey with a green dot and the anime's
+// orange with a hexagon. Only drawn when the build has both themes
+void drawThemeSwitch(LovyanGFX& g, const UsageSwitch& s);
+
 class UsagePage {
 public:
     // `canvas` must already be created, as large as the display; it is
     // pushed at (0, 0)
     explicit UsagePage(M5Canvas& canvas) : c_(canvas) {}
+
+    // Where its theme switch is, for the board's touch handling
+    UsageSwitch themeSwitch() const { return usageThemeSwitch(c_.width()); }
 
     // Redraws the whole page and pushes it. `elapsedSec`: how long ago the
     // usage line arrived, for the countdowns and the clock.

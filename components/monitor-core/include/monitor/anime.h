@@ -105,9 +105,10 @@ uint16_t levelColor(float percent, const std::string& severity);
 // Dashed line, 2 px thick
 void dashed(LovyanGFX& g, int x0, int y0, int x1, int y1, uint16_t color, int dash = 9, int gap = 7);
 
-// A tile's chrome on the board's display: the frame, a header row (index
-// tag, name, Japanese caption) and a footer row (English caption, clock or
-// note). The board lays the rows out; the icon or the usage bars go between
+// A tile's two rows on the board's display, with no frame around them: a
+// header (number tag, name, Japanese caption) and a footer (English
+// caption, clock or note). The board lays the rows out; the icon or the
+// usage bars go between
 struct Tile {
     int x = 0, y = 0, w = 0, h = 0;   // the whole tile
     int headY = 0, footY = 0;         // centre lines of the two rows
@@ -117,15 +118,16 @@ struct Tile {
     const char* jp = "";              // header, right, in `color`
     const char* en = "";              // footer, left, in `color`
     uint16_t color = kOrange;
-    uint16_t frameColor = kOrangeDim;
+    uint16_t tagColor = kOrange;      // the tag's fill (the board blinks it for a red state)
     const char* clock = nullptr;      // footer, right, seven segments
     const char* note = nullptr;       // footer, right, when there is no clock
 };
 void drawTile(LovyanGFX& g, const Tile& t);
 
-// Room the frame and the rows leave inside a tile, for the board's layout
-constexpr int kTileInset = 8;   // frame to the tile's edge, and its thickness
-constexpr int kRowGap    = 6;   // frame to a row, row to the icon
+// Where the rows sit in a tile, for the board's layout
+constexpr int kRowInset = 10;   // from the tile's top and bottom
+constexpr int kTilePad  = 12;   // from its sides (the usage bars too)
+constexpr int kRowGap   = 6;    // between a row and the icon
 
 // The views' anime versions, called by the classic ones when the theme is on
 void usageRows(M5Canvas& c, int x, int y, int w, int h, const Usage& usage,

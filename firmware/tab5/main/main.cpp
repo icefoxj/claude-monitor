@@ -81,7 +81,7 @@ constexpr float kPi = 3.14159265f;
 constexpr int   kMaxSessions = 6;
 constexpr int   kTileGap     = 16;     // px between an icon and the tile's side
 constexpr float kIconScale   = 0.80f;  // the icon takes this much of the room the texts leave
-constexpr float kAnimeIconScale = 0.92f;   // in the anime theme, where the frame already keeps it apart
+constexpr float kAnimeIconScale = 0.96f;   // in the anime theme, whose rows already keep it apart
 constexpr int   kViewW       = 720;    // the inspector canvas on the detail page
 constexpr int   kViewH       = 720;
 
@@ -135,7 +135,7 @@ struct Rect { int x = 0, y = 0, w = 0, h = 0; bool contains(int px, int py) cons
 
 // Where a tile's icon and its two text rows go. Classic: name band, icon
 // and clock band as one group centred in the tile. Anime: the rows at the
-// top and the bottom inside the tile's frame, the icon centred between
+// top and the bottom of the tile, the icon centred between
 struct Placement {
     int iconSize, ix, iy, nameY, clockY;
     int roomY, roomH;   // the band the icon sits in, for the usage tile's bars
@@ -144,13 +144,13 @@ struct Placement {
 Placement placeIn(const Rect& t, int band){
     Placement p;
     if (monitor::animeTheme()){
-        const int rowTop = monitor::anime::kTileInset + monitor::anime::kRowGap;
+        const int rowTop = monitor::anime::kRowInset;
         p.nameY  = t.y + rowTop + band / 2;
         p.clockY = t.y + t.h - rowTop - band / 2;
         const int top    = t.y + rowTop + band + monitor::anime::kRowGap;
         const int bottom = t.y + t.h - rowTop - band - monitor::anime::kRowGap;
         int room = bottom - top;
-        if (t.w - 2 * kTileGap - 2 * monitor::anime::kTileInset < room) room = t.w - 2 * kTileGap - 2 * monitor::anime::kTileInset;
+        if (t.w - 2 * monitor::anime::kTilePad < room) room = t.w - 2 * monitor::anime::kTilePad;
         p.iconSize = static_cast<int>(room * kAnimeIconScale) & ~1;
         p.ix = t.x + (t.w - p.iconSize) / 2;
         p.iy = top + (bottom - top - p.iconSize) / 2;
@@ -508,7 +508,9 @@ extern "C" void app_main(void){
                 const Placement p = placeIn(usageTile, style.band);
                 usageNameY = p.nameY;
                 usageAgeY  = p.clockY;
-                usageBox   = { usageTile.x + 2 * kTileGap, p.roomY, tw - 4 * kTileGap, p.roomH };
+                usageBox   = monitor::animeTheme()
+                    ? Rect{ usageTile.x + monitor::anime::kTilePad, p.roomY, tw - 2 * monitor::anime::kTilePad, p.roomH }
+                    : Rect{ usageTile.x + 2 * kTileGap, p.roomY, tw - 4 * kTileGap, p.roomH };
                 if (usageCanvas.width() != usageBox.w || usageCanvas.height() != usageBox.h){
                     usageCanvas.deleteSprite();
                     usageCanvas.setPsram(true);
@@ -522,10 +524,10 @@ extern "C" void app_main(void){
         textDirty = true;
     };
 
-    // The anime theme's chrome around a session's tile (or the detail
-    // page's icon column): frame, number, name and state in the header,
-    // the state in English and the clock in the footer; the frame of a red
-    // state blinks with the once-a-second redraw
+    // The anime theme's rows around a session's icon (a tile, or the detail
+    // page's icon column): number, name and state in the header, the state
+    // in English and the clock in the footer; a red state's number tag
+    // blinks with the once-a-second redraw
     auto animeTile = [&](const Rect& r, int nameY, int clockY, int number, Slot* s) {
         const monitor::State st = s->ui.state();
         const monitor::anime::Look lk = monitor::anime::look(st);
@@ -541,8 +543,7 @@ extern "C" void app_main(void){
         t.jp    = lk.jp;
         t.en    = lk.en;
         t.color = lk.color;
-        t.frameColor = alert ? ((nowMs() / 1000) % 2 ? lk.color : lk.dark)
-                             : (st == monitor::State::Question ? lk.color : monitor::anime::kOrangeDim);
+        t.tagColor = alert && (nowMs() / 1000) % 2 ? lk.dark : lk.color;
         t.clock = clock;
         monitor::anime::drawTile(M5.Display, t);
     };
@@ -719,6 +720,16 @@ extern "C" void app_main(void){
         ESP_LOGI(TAG, "screensaver off");
     };
 
+    // The "theme" command and the switch on the usage page: stored, and
+    // everything drawn again (the saver steps aside)
+    auto switchTheme = [&](monitor::Theme t) {
+        if (t == monitor::activeTheme() || !monitor::setActiveTheme(t)) return;
+        const bool saved = nvsOK && monitor::saveTheme(t);
+        ESP_LOGI(TAG, "theme %s (%s)", monitor::themeName(t), saved ? "stored" : "not stored");
+        relayout = true;
+        textDirty = viewDirty = pageDirty = true;
+    };
+
     while(true){
         M5.update();   // refreshes the touch state
 
@@ -867,20 +878,14 @@ extern "C" void app_main(void){
                     monitor::dumpDisplay(M5.Display, writeAll);
                     break;
                 case monitor::Command::Theme: {
-                    // "theme classic" / "theme anime": stored, everything redrawn
+                    // "theme classic" / "theme anime"
                     monitor::Theme t;
                     if (!monitor::parseTheme(cmd.arg, t) || !monitor::themeAvailable(t)){
                         static const char kUsage[] = "ERROR theme: expected classic or anime\n";
                         writeLine(kUsage, sizeof(kUsage) - 1);
                         break;
                     }
-                    if (t != monitor::activeTheme()){
-                        monitor::setActiveTheme(t);
-                        const bool saved = nvsOK && monitor::saveTheme(t);
-                        ESP_LOGI(TAG, "theme %s (%s)", monitor::themeName(t), saved ? "stored" : "not stored");
-                        relayout = true;   // every tile and page draws again (and the saver steps aside)
-                        textDirty = viewDirty = pageDirty = true;
-                    }
+                    switchTheme(t);
                     sendStatus(brightness);
                     break;
                 }
@@ -933,6 +938,10 @@ extern "C" void app_main(void){
                 autoOff = false;
             } else if (saver.active()){
                 leaveSaver();
+            } else if (view == View::Usage && monitor::themeAvailable(monitor::Theme::Anime)
+                       && usagePage.themeSwitch().contains(t.x, t.y)){
+                // The switch in the usage page's corner: the other look, same page
+                switchTheme(monitor::animeTheme() ? monitor::Theme::Classic : monitor::Theme::Anime);
             } else if (view != View::Grid){
                 view = View::Grid;
                 detail = nullptr;

@@ -125,13 +125,17 @@ void UsagePage::drawHeader(const Usage& usage, int32_t elapsedSec, const Box& b)
     c_.setTextColor(kText, kBg);
     c_.drawString("Claude usage", b.x, cy);
 
+    // The age left of the theme switch, which takes the corner
+    const UsageSwitch sw = usageThemeSwitch(c_.width());
+    const bool withSwitch = themeAvailable(Theme::Anime);
     char age[40];
     usageAgeText(usage.ageSec + elapsedSec, age, sizeof(age));
     c_.setTextDatum(textdatum_t::middle_right);
     c_.setFont(&fonts::DejaVu18);
     c_.setTextColor(kDim, kBg);
-    c_.drawString(age, b.x + b.w, cy);
+    c_.drawString(age, withSwitch ? sw.x - 24 : b.x + b.w, cy);
     c_.drawFastHLine(b.x, b.y + b.h + 4, b.w, kRule);
+    drawThemeSwitch(c_, sw);
 }
 
 bool usagePlanText(const Usage& usage, std::string& out, int& tone){
@@ -199,6 +203,37 @@ void UsagePage::dashedLine(int x0, int y0, int x1, int y1, uint16_t color){
             c_.drawLine(x0 + static_cast<int>(dx * s / len), y0 + static_cast<int>(dy * s / len) + k,
                         x0 + static_cast<int>(dx * e / len), y0 + static_cast<int>(dy * e / len) + k, color);
         }
+    }
+}
+
+UsageSwitch usageThemeSwitch(int pageWidth){
+    UsageSwitch s;
+    s.size = 56;
+    s.x = pageWidth - kMargin - s.size;
+    s.y = 12;
+    s.hitW = 160;
+    s.hitH = 110;
+    s.hitX = pageWidth - s.hitW;
+    s.hitY = 0;
+    return s;
+}
+
+void drawThemeSwitch(LovyanGFX& g, const UsageSwitch& s){
+    if (!themeAvailable(Theme::Anime)) return;
+    const int x = s.x, y = s.y, n = s.size;
+    // The two looks, one each side of the diagonal
+    g.fillTriangle(x, y, x + n - 1, y, x, y + n - 1, rgb565(52, 52, 60));
+    g.fillTriangle(x + n - 1, y, x + n - 1, y + n - 1, x, y + n - 1, anime::kOrange);
+    g.fillCircle(x + n * 3 / 10, y + n * 3 / 10, n / 7, rgb565(56, 176, 72));
+    anime::hexagonOutline(g, x + n * 0.70f, y + n * 0.70f, n * 0.17f, n / 18.0f, anime::kBg);
+    g.drawLine(x + n - 1, y, x, y + n - 1, kText);
+    g.drawLine(x + n - 1, y + 1, x + 1, y + n - 1, kText);
+    // Its outline in the current look
+    if (animeTheme()){
+        anime::frame(g, x - 5, y - 5, n + 10, n + 10, 12, 2, anime::kOrange);
+    } else {
+        g.drawRoundRect(x - 5, y - 5, n + 10, n + 10, 12, kDim);
+        g.drawRoundRect(x - 4, y - 4, n + 8, n + 8, 11, kDim);
     }
 }
 
