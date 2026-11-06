@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "monitor/anime.h"
+#include "monitor/galactic.h"
+#include "monitor/lcars.h"
 #include "monitor/theme.h"
 #include "monitor/usageview.h"
 
@@ -69,8 +71,10 @@ void percentText(float p, char* out, size_t size){
 void UsagePage::draw(const Usage& usage, int32_t elapsedSec){
     const int W = c_.width(), H = c_.height();
     if (W <= 0 || H <= 0) return;
-    if (animeTheme()){
-        anime::usagePage(c_, usage, elapsedSec);
+    if (activeTheme() != Theme::Classic){
+        if (animeTheme()) anime::usagePage(c_, usage, elapsedSec);
+        else if (lcarsTheme()) lcars::usagePage(c_, usage, elapsedSec);
+        else galactic::usagePage(c_, usage, elapsedSec);
         push();
         return;
     }
@@ -127,7 +131,7 @@ void UsagePage::drawHeader(const Usage& usage, int32_t elapsedSec, const Box& b)
 
     // The age left of the theme switch, which takes the corner
     const UsageSwitch sw = usageThemeSwitch(c_.width());
-    const bool withSwitch = themeAvailable(Theme::Anime);
+    const bool withSwitch = nextAvailableTheme(activeTheme()) != activeTheme();
     char age[40];
     usageAgeText(usage.ageSec + elapsedSec, age, sizeof(age));
     c_.setTextDatum(textdatum_t::middle_right);
@@ -218,19 +222,64 @@ UsageSwitch usageThemeSwitch(int pageWidth){
     return s;
 }
 
+namespace {
+
+// One theme's stripe in the switch, at `percent` of its brightness: the
+// classic's grey with a green dot, the anime's orange with a hexagon, the
+// LCARS lilac with a peach bar and a black cut, the galactic yellow reticle
+void themeEmblem(LovyanGFX& g, Theme t, int x, int y, int w, int h, int percent){
+    auto c = [&](uint16_t color){ return glyphs::shade(color, percent); };
+    const float cx = x + w * 0.5f, cy = y + h * 0.5f;
+    const float r = (w < h ? w : h) * 0.30f;
+    switch (t){
+        case Theme::Classic:
+            g.fillRect(x, y, w, h, c(rgb565(52, 52, 60)));
+            g.fillCircle(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), c(rgb565(56, 176, 72)));
+            break;
+        case Theme::Anime:
+            g.fillRect(x, y, w, h, c(anime::kOrange));
+            anime::hexagonOutline(g, cx, cy, r * 1.1f, r * 0.35f, anime::kBg);
+            break;
+        case Theme::Lcars:
+            g.fillRect(x, y, w, h, c(lcars::kLilac));
+            g.fillRect(x, y + h / 3 - 2, w, 3, lcars::kBg);
+            lcars::capsule(g, x + w / 5, y + h / 2, w * 3 / 5, h / 4, c(lcars::kPeach));
+            break;
+        case Theme::Galactic:
+            g.fillRect(x, y, w, h, galactic::kBg);
+            galactic::circle(g, static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r * 1.2f), 2, c(galactic::kYellow));
+            g.drawFastHLine(x + 1, static_cast<int>(cy), w - 2, c(galactic::kGreen));
+            g.drawFastVLine(static_cast<int>(cx), y + h / 4, h / 2, c(galactic::kGreen));
+            break;
+    }
+}
+
+}  // namespace
+
 void drawThemeSwitch(LovyanGFX& g, const UsageSwitch& s){
-    if (!themeAvailable(Theme::Anime)) return;
+    int count = 0;
+    for (int i = 0; i < kThemeCount; i++) if (themeAvailable(static_cast<Theme>(i))) count++;
+    if (count < 2) return;
     const int x = s.x, y = s.y, n = s.size;
-    // The two looks, one each side of the diagonal
-    g.fillTriangle(x, y, x + n - 1, y, x, y + n - 1, rgb565(52, 52, 60));
-    g.fillTriangle(x + n - 1, y, x + n - 1, y + n - 1, x, y + n - 1, anime::kOrange);
-    g.fillCircle(x + n * 3 / 10, y + n * 3 / 10, n / 7, rgb565(56, 176, 72));
-    anime::hexagonOutline(g, x + n * 0.70f, y + n * 0.70f, n * 0.17f, n / 18.0f, anime::kBg);
-    g.drawLine(x + n - 1, y, x, y + n - 1, kText);
-    g.drawLine(x + n - 1, y + 1, x + 1, y + n - 1, kText);
+    // A stripe per theme the build has, in the order a tap goes through
+    // them; the one in use lit, the others dim
+    int k = 0;
+    for (int i = 0; i < kThemeCount; i++){
+        const Theme t = static_cast<Theme>(i);
+        if (!themeAvailable(t)) continue;
+        const int sx = x + k * n / count, ex = x + (k + 1) * n / count;
+        themeEmblem(g, t, sx, y, ex - sx, n, t == activeTheme() ? 100 : 35);
+        if (k > 0) g.fillRect(sx - 1, y, 2, n, kBg);
+        k++;
+    }
     // Its outline in the current look
     if (animeTheme()){
         anime::frame(g, x - 5, y - 5, n + 10, n + 10, 12, 2, anime::kOrange);
+    } else if (lcarsTheme()){
+        g.drawRoundRect(x - 5, y - 5, n + 10, n + 10, 14, lcars::kOrange);
+        g.drawRoundRect(x - 4, y - 4, n + 8, n + 8, 13, lcars::kOrange);
+    } else if (galacticTheme()){
+        galactic::brackets(g, x - 6, y - 6, n + 12, n + 12, 14, 2, galactic::kYellow);
     } else {
         g.drawRoundRect(x - 5, y - 5, n + 10, n + 10, 12, kDim);
         g.drawRoundRect(x - 4, y - 4, n + 8, n + 8, 11, kDim);

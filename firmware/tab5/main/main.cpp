@@ -58,7 +58,9 @@
 #include "monitor/calibration.h"
 #include "monitor/eventlog.h"
 #include "monitor/eventview.h"
+#include "monitor/galactic.h"
 #include "monitor/icons.h"
+#include "monitor/lcars.h"
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
 #include "monitor/screensaver.h"
@@ -81,7 +83,7 @@ constexpr float kPi = 3.14159265f;
 constexpr int   kMaxSessions = 6;
 constexpr int   kTileGap     = 16;     // px between an icon and the tile's side
 constexpr float kIconScale   = 0.80f;  // the icon takes this much of the room the texts leave
-constexpr float kAnimeIconScale = 0.96f;   // in the anime theme, whose rows already keep it apart
+constexpr float kAnimeIconScale = 0.96f;   // in the anime and LCARS themes, whose rows already keep it apart
 constexpr int   kViewW       = 720;    // the inspector canvas on the detail page
 constexpr int   kViewH       = 720;
 
@@ -135,26 +137,35 @@ struct Rect { int x = 0, y = 0, w = 0, h = 0; bool contains(int px, int py) cons
 
 // Where a tile's icon and its two text rows go. Classic: name band, icon
 // and clock band as one group centred in the tile. Anime: the rows at the
-// top and the bottom of the tile, the icon centred between
+// top and the bottom of the tile, the icon centred between (galactic too).
+// LCARS: the same rows, and the icon right of the side bar that joins them
 struct Placement {
     int iconSize, ix, iy, nameY, clockY;
-    int roomY, roomH;   // the band the icon sits in, for the usage tile's bars
+    int roomX, roomY, roomW, roomH;   // the box the icon sits in, for the usage tile's bars
 };
 
 Placement placeIn(const Rect& t, int band){
     Placement p;
-    if (monitor::animeTheme()){
-        const int rowTop = monitor::anime::kRowInset;
+    if (monitor::activeTheme() != monitor::Theme::Classic){
+        const bool lcars = monitor::lcarsTheme();
+        const bool galactic = monitor::galacticTheme();
+        const int rowTop = lcars ? monitor::lcars::kRowInset : (galactic ? monitor::galactic::kRowInset : monitor::anime::kRowInset);
+        const int gap    = lcars ? monitor::lcars::kRowGap : (galactic ? monitor::galactic::kRowGap : monitor::anime::kRowGap);
+        const int pad    = lcars ? monitor::lcars::kTilePad : (galactic ? monitor::galactic::kTilePad : monitor::anime::kTilePad);
         p.nameY  = t.y + rowTop + band / 2;
         p.clockY = t.y + t.h - rowTop - band / 2;
-        const int top    = t.y + rowTop + band + monitor::anime::kRowGap;
-        const int bottom = t.y + t.h - rowTop - band - monitor::anime::kRowGap;
+        const int top    = t.y + rowTop + band + gap;
+        const int bottom = t.y + t.h - rowTop - band - gap;
+        const int left   = t.x + pad + (lcars ? monitor::lcars::sideWidth(band) + 2 * gap : 0);
+        const int right  = t.x + t.w - pad;
         int room = bottom - top;
-        if (t.w - 2 * monitor::anime::kTilePad < room) room = t.w - 2 * monitor::anime::kTilePad;
+        if (right - left < room) room = right - left;
         p.iconSize = static_cast<int>(room * kAnimeIconScale) & ~1;
-        p.ix = t.x + (t.w - p.iconSize) / 2;
+        p.ix = left + (right - left - p.iconSize) / 2;
         p.iy = top + (bottom - top - p.iconSize) / 2;
+        p.roomX = left;
         p.roomY = top;
+        p.roomW = right - left;
         p.roomH = bottom - top;
     } else {
         int room = t.h - 2 * band;
@@ -165,7 +176,9 @@ Placement placeIn(const Rect& t, int band){
         p.iy = groupTop + band;
         p.nameY  = groupTop + band / 2;
         p.clockY = p.iy + p.iconSize + band / 2;
+        p.roomX = t.x + 2 * kTileGap;
         p.roomY = p.iy;
+        p.roomW = t.w - 4 * kTileGap;
         p.roomH = p.iconSize;
     }
     return p;
@@ -508,9 +521,7 @@ extern "C" void app_main(void){
                 const Placement p = placeIn(usageTile, style.band);
                 usageNameY = p.nameY;
                 usageAgeY  = p.clockY;
-                usageBox   = monitor::animeTheme()
-                    ? Rect{ usageTile.x + monitor::anime::kTilePad, p.roomY, tw - 2 * monitor::anime::kTilePad, p.roomH }
-                    : Rect{ usageTile.x + 2 * kTileGap, p.roomY, tw - 4 * kTileGap, p.roomH };
+                usageBox   = { p.roomX, p.roomY, p.roomW, p.roomH };
                 if (usageCanvas.width() != usageBox.w || usageCanvas.height() != usageBox.h){
                     usageCanvas.deleteSprite();
                     usageCanvas.setPsram(true);
@@ -524,17 +535,46 @@ extern "C" void app_main(void){
         textDirty = true;
     };
 
-    // The anime theme's rows around a session's icon (a tile, or the detail
-    // page's icon column): number, name and state in the header, the state
-    // in English and the clock in the footer; a red state's number tag
-    // blinks with the once-a-second redraw
-    auto animeTile = [&](const Rect& r, int nameY, int clockY, int number, Slot* s) {
+    // The anime, LCARS or galactic rows around a session's icon (a tile, or
+    // the detail page's icon column): number, name and state, the clock; a
+    // red state blinks (the anime's number tag, the LCARS elbows, the
+    // galactic brackets) with the once-a-second redraw
+    auto themedTile = [&](const Rect& r, int nameY, int clockY, int number, Slot* s) {
         const monitor::State st = s->ui.state();
-        const monitor::anime::Look lk = monitor::anime::look(st);
         const bool alert = st == monitor::State::WaitingUser || st == monitor::State::Error;
+        const bool blinkOff = alert && (nowMs() / 1000) % 2;
         char index[12], clock[16];
         snprintf(index, sizeof(index), "%02d", number);
         clockText(s->ui.framesInState(), clock, sizeof(clock));
+        if (monitor::lcarsTheme()){
+            const monitor::lcars::Look lk = monitor::lcars::look(st);
+            monitor::lcars::Tile t;
+            t.x = r.x; t.y = r.y; t.w = r.w; t.h = r.h;
+            t.headY = nameY; t.footY = clockY; t.band = style.band;
+            t.index = index;
+            t.name  = s->label.c_str();
+            t.label = lk.label;
+            t.color = lk.color;
+            t.frame = blinkOff ? monitor::lcars::shade(lk.color, 35) : lk.color;
+            t.clock = clock;
+            monitor::lcars::drawTile(M5.Display, t);
+            return;
+        }
+        if (monitor::galacticTheme()){
+            const monitor::galactic::Look lk = monitor::galactic::look(st);
+            monitor::galactic::Tile t;
+            t.x = r.x; t.y = r.y; t.w = r.w; t.h = r.h;
+            t.headY = nameY; t.footY = clockY; t.band = style.band;
+            t.index = index;
+            t.name  = s->label.c_str();
+            t.label = lk.label;
+            t.color = lk.color;
+            t.frame = blinkOff ? monitor::galactic::shade(lk.color, 30) : lk.color;
+            t.clock = clock;
+            monitor::galactic::drawTile(M5.Display, t);
+            return;
+        }
+        const monitor::anime::Look lk = monitor::anime::look(st);
         monitor::anime::Tile t;
         t.x = r.x; t.y = r.y; t.w = r.w; t.h = r.h;
         t.headY = nameY; t.footY = clockY; t.band = style.band;
@@ -543,7 +583,7 @@ extern "C" void app_main(void){
         t.jp    = lk.jp;
         t.en    = lk.en;
         t.color = lk.color;
-        t.tagColor = alert && (nowMs() / 1000) % 2 ? lk.dark : lk.color;
+        t.tagColor = blinkOff ? lk.dark : lk.color;
         t.clock = clock;
         monitor::anime::drawTile(M5.Display, t);
     };
@@ -570,6 +610,36 @@ extern "C" void app_main(void){
             monitor::anime::drawTile(M5.Display, t);
             return;
         }
+        if (monitor::lcarsTheme()){
+            char age[40];
+            monitor::usageAgeText(usage.ageSec + elapsed, age, sizeof(age));
+            const std::string note = monitor::lcars::upper(age);
+            monitor::lcars::Tile t;
+            t.x = usageTile.x; t.y = usageTile.y; t.w = usageTile.w; t.h = usageTile.h;
+            t.headY = usageNameY; t.footY = usageAgeY; t.band = style.band;
+            t.name  = "Claude usage";
+            t.label = "PLAN LIMITS";
+            t.color = monitor::lcars::kOrange;
+            t.frame = monitor::lcars::kOrange;
+            t.note  = note.c_str();
+            monitor::lcars::drawTile(M5.Display, t);
+            return;
+        }
+        if (monitor::galacticTheme()){
+            char age[40];
+            monitor::usageAgeText(usage.ageSec + elapsed, age, sizeof(age));
+            const std::string note = monitor::galactic::upper(age);
+            monitor::galactic::Tile t;
+            t.x = usageTile.x; t.y = usageTile.y; t.w = usageTile.w; t.h = usageTile.h;
+            t.headY = usageNameY; t.footY = usageAgeY; t.band = style.band;
+            t.name  = "Claude usage";
+            t.label = "TELEMETRY";
+            t.color = monitor::galactic::kYellow;
+            t.frame = monitor::galactic::kYellow;
+            t.note  = note.c_str();
+            monitor::galactic::drawTile(M5.Display, t);
+            return;
+        }
         const int32_t age = usage.ageSec + elapsed;
         char ageText[24];
         if (age < 90)        snprintf(ageText, sizeof(ageText), "just now");
@@ -583,14 +653,14 @@ extern "C" void app_main(void){
     auto drawTexts = [&]() {
         char clock[16];
         if (view == View::Usage) return;   // the page has its own
-        if (monitor::animeTheme()){
+        if (monitor::activeTheme() != monitor::Theme::Classic){
             if (view == View::Detail && detail){
                 int number = 1;
                 for (Slot* s : visibleSlots()){ if (s == detail) break; ++number; }
-                animeTile(detailCol, detailLabel.y + detailLabel.h / 2, detailClock.y + detailClock.h / 2, number, detail);
+                themedTile(detailCol, detailLabel.y + detailLabel.h / 2, detailClock.y + detailClock.h / 2, number, detail);
             } else {
                 int number = 1;
-                for (Slot* s : visibleSlots()) animeTile(s->tile, s->nameY, s->clockY, number++, s);
+                for (Slot* s : visibleSlots()) themedTile(s->tile, s->nameY, s->clockY, number++, s);
                 drawUsageTile();
             }
             return;
@@ -938,10 +1008,11 @@ extern "C" void app_main(void){
                 autoOff = false;
             } else if (saver.active()){
                 leaveSaver();
-            } else if (view == View::Usage && monitor::themeAvailable(monitor::Theme::Anime)
-                       && usagePage.themeSwitch().contains(t.x, t.y)){
-                // The switch in the usage page's corner: the other look, same page
-                switchTheme(monitor::animeTheme() ? monitor::Theme::Classic : monitor::Theme::Anime);
+            } else if (view == View::Usage && usagePage.themeSwitch().contains(t.x, t.y)
+                       && monitor::nextAvailableTheme(monitor::activeTheme()) != monitor::activeTheme()){
+                // The switch in the usage page's corner: the next look (classic,
+                // anime, LCARS, galactic, classic...), same page
+                switchTheme(monitor::nextAvailableTheme(monitor::activeTheme()));
             } else if (view != View::Grid){
                 view = View::Grid;
                 detail = nullptr;

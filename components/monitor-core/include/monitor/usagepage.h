@@ -55,9 +55,11 @@ struct UsageSwitch {
 };
 UsageSwitch usageThemeSwitch(int pageWidth);
 
-// The icon in the current theme's look: a square cut along its diagonal
-// into the two looks, the classic's grey with a green dot and the anime's
-// orange with a hexagon. Only drawn when the build has both themes
+// The icon, outlined in the current theme's look: one stripe per theme the
+// build has (the classic's grey with a green dot, the anime's orange with
+// a hexagon, the LCARS lilac with a peach bar, the galactic yellow
+// reticle), in the order a tap goes
+// through them, the one in use lit. Not drawn with a single theme
 void drawThemeSwitch(LovyanGFX& g, const UsageSwitch& s);
 
 class UsagePage {

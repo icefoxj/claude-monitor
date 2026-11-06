@@ -6,6 +6,7 @@
 #include <string>
 
 #include "monitor/eventlog.h"
+#include "monitor/glyphs.h"
 #include "monitor/protocol.h"
 #include "monitor/usage.h"
 
@@ -39,28 +40,14 @@ constexpr uint16_t kGreyDark   = rgb(40, 40, 48);
 constexpr uint16_t kWhite      = rgb(255, 255, 255);
 constexpr uint16_t kText       = rgb(244, 238, 226);  // warm white
 
-// Faces. Cond: condensed extra-bold Latin; Mono: condensed monospace for
-// data; Gothic: bold Japanese for small captions; Mincho: black, squeezed
-// Japanese for titles (44 px, every caption in the sources); Kanji: the
-// same face larger, but above 60 px it only has the icons' kanji
-enum class Face { Cond, Mono, Gothic, Mincho, Kanji };
-
-// Draws `s` with `face` at `px` pixels (the nearest size built, scaled)
-// and returns its width. `bg` < 0 blends into what is already there;
-// `tracking` adds that many px between letters.
-int text(LovyanGFX& g, const char* s, int x, int y, Face face, int px, uint16_t fg,
-         textdatum_t datum = textdatum_t::top_left, int32_t bg = -1, int tracking = 0);
-int textWidth(LovyanGFX& g, const char* s, Face face, int px, int tracking = 0);
-
-// `s` cut with "..." to fit `room` px
-std::string fit(LovyanGFX& g, const std::string& s, Face face, int px, int room);
-
-// Upper case, for the English labels
-std::string upper(const std::string& s);
-
-// `color` at `percent` of its brightness: the unlit segments behind a
-// seven-segment readout are its colour at about 15 %
-uint16_t shade(uint16_t color, int percent);
+// Text through the shared theme fonts (glyphs.h): Face::Cond, Mono, Gothic,
+// Mincho and Kanji are this theme's
+using glyphs::Face;
+using glyphs::fit;
+using glyphs::shade;
+using glyphs::text;
+using glyphs::textWidth;
+using glyphs::upper;
 
 // How a state looks: its colour, a dark shade of it for fills, its
 // Japanese and English captions

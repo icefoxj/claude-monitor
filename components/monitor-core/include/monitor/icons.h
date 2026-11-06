@@ -130,6 +130,24 @@ private:
     void animeLinkLost();
     void animeToolMark();
 
+    // The LCARS theme's icons (lcars_icons.cpp), upright too
+    void lcarsCore(float spin, GearStyle style);
+    void lcarsPanel(Panel kind, float scale);
+    void lcarsStandby(const Hourglass& h);
+    void lcarsRing(float fraction, int lap);
+    void lcarsDots(std::string_view codes);
+    void lcarsLinkLost();
+    void lcarsToolMark();
+
+    // The galactic theme's icons (galactic_icons.cpp), upright too
+    void galacticTrench(float spin, GearStyle style);
+    void galacticPanel(Panel kind, float scale);
+    void galacticStandby(const Hourglass& h);
+    void galacticRing(float fraction, int lap);
+    void galacticDots(std::string_view codes);
+    void galacticLinkLost();
+    void galacticToolMark();
+
     M5Canvas& canvas_;
     float unit_;        // canvas pixels per 128-space unit
     float cx_, cy_;     // canvas centre in pixels

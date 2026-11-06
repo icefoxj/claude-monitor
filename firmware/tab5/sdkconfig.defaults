@@ -5,12 +5,14 @@
 CONFIG_IDF_TARGET="esp32p4"
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-# The anime theme's fonts take 900 KB: a 4 MB app partition instead of
-# the 1.5 MB of the single-app-large table, with room to spare (nvs stays
-# at 0x9000, so a stored calibration survives the change)
+# The themes' fonts take 1.8 MB: a 4 MB app partition instead of the
+# 1.5 MB of the single-app-large table (nvs stays at 0x9000, so a stored
+# calibration survives the change)
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_MONITOR_ANIME_THEME=y
+CONFIG_MONITOR_LCARS_THEME=y
+CONFIG_MONITOR_GALACTIC_THEME=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_SPIRAM=y

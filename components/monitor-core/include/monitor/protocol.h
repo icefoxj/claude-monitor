@@ -56,8 +56,9 @@
 //                  -> the account's plan usage (see usage.h), for boards that
 //                     list "usage" in features= (the Tab5's screensaver)
 //   "view saver"     -> the Tab5 shows its screensaver now (captures, tests)
-//   "theme <classic|anime>" -> how a board that lists "theme" in features=
-//                     draws everything (the Tab5); stored, answered with STATUS
+//   "theme <classic|anime|lcars|galactic>" -> how a board that lists "theme"
+//                     in features= draws everything (the Tab5); stored,
+//                     answered with STATUS
 
 namespace monitor {
 
@@ -68,12 +69,20 @@ namespace monitor {
 // history=/project= (the usage page) and "view usage"; 9 = theme
 constexpr int kProtocolVersion = 9;
 
-// How a board draws: the original icons, or the anime theme (an orange
-// NERV-style HUD with Japanese captions; Tab5 only)
-enum class Theme { Classic, Anime };
+// How a board draws: the original icons, the anime theme (an orange
+// NERV-style HUD with Japanese captions), the LCARS theme (the pastel
+// elbows and capsules of 90s TV starship consoles) or the galactic theme
+// (the vector targeting computers of 70s space-opera films); all but the
+// first Tab5 only
+enum class Theme { Classic, Anime, Lcars, Galactic };
+constexpr int kThemeCount = 4;
 
-// Protocol word for a theme ("classic", "anime")
+// Protocol word for a theme ("classic", "anime", "lcars", "galactic")
 const char* themeName(Theme t);
+
+// The one after `t`, in the order a tap on the switch goes through them
+// (classic, anime, lcars, galactic, classic...)
+Theme nextTheme(Theme t);
 
 // The reverse: false when the word is not a theme
 bool parseTheme(std::string_view name, Theme& out);

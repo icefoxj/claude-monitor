@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Builds the anime theme's fonts for the Tab5 as VLW files (Processing's
-smooth-font format, 8-bit alpha per pixel, which M5GFX draws anti-aliased).
+"""Builds the Tab5 themes' fonts as VLW files (Processing's smooth-font
+format, 8-bit alpha per pixel, which M5GFX draws anti-aliased).
 
 Only the characters the firmware draws are kept: printable ASCII for the
 Latin faces, and for the Japanese ones every non-ASCII character found in
-the theme's sources (so a new caption in the code needs a re-run). The big
-mincho sizes, used inside the icons, only carry the kanji the icons show.
+the anime theme's sources (so a new caption in the code needs a re-run).
+The big mincho sizes, used inside the icons, only carry the kanji the icons
+show; the big LCARS and galactic sizes only capitals, digits and a few signs.
 
-The faces are Noto (SIL Open Font License 1.1, no reserved font names),
-from https://github.com/google/fonts/tree/main/ofl:
-    notosans/NotoSans[wdth,wght].ttf          -> NotoSans.ttf
-    notosansmono/NotoSansMono[wdth,wght].ttf  -> NotoSansMono.ttf
-    notoserifjp/NotoSerifJP[wght].ttf         -> NotoSerifJP.ttf
-    notosansjp/NotoSansJP[wght].ttf           -> NotoSansJP.ttf
+The faces are under the SIL Open Font License 1.1, none with reserved font
+names, from https://github.com/google/fonts/tree/main/ofl:
+    notosans/NotoSans[wdth,wght].ttf          -> NotoSans.ttf      (anime)
+    notosansmono/NotoSansMono[wdth,wght].ttf  -> NotoSansMono.ttf  (anime)
+    notoserifjp/NotoSerifJP[wght].ttf         -> NotoSerifJP.ttf   (anime)
+    notosansjp/NotoSansJP[wght].ttf           -> NotoSansJP.ttf    (anime)
+    antonio/Antonio[wght].ttf                 -> Antonio.ttf       (lcars)
+    oxanium/Oxanium[wght].ttf                 -> Oxanium.ttf       (galactic)
 
 Usage (needs Pillow):
-    python tools/make-fonts.py <folder with the four .ttf files> [--preview out.png]
+    python tools/make-fonts.py <folder with the six .ttf files> [--preview out.png]
 
 Writes components/monitor-core/fonts/*.vlw; the component embeds them
 (a font added here also goes in the component's CMakeLists.txt and in the
@@ -46,8 +49,11 @@ ICON_KANJI = "処理並列圧縮警告質問異常待機完了"
 
 ASCII = "".join(chr(c) for c in range(0x20, 0x7F))
 
+# What the LCARS theme writes large: icon words, percentages, clocks
+CAPS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-:%./"
+
 # name, file, variation axes (Weight, Width), pixel size, horizontal scale,
-# character set ("ascii", "jp" or "icon")
+# character set ("ascii", "jp", "icon" or "caps")
 FONTS = [
     ("cond18",    "NotoSans.ttf",     (800, 62), 18,  1.0,  "ascii"),
     ("cond22",    "NotoSans.ttf",     (800, 62), 22,  1.0,  "ascii"),
@@ -63,6 +69,21 @@ FONTS = [
     ("mincho44",  "NotoSerifJP.ttf",  (900,),    44,  0.82, "jp"),
     ("mincho96",  "NotoSerifJP.ttf",  (900,),    96,  0.82, "icon"),
     ("mincho192", "NotoSerifJP.ttf",  (900,),    192, 0.82, "icon"),
+    ("lcars16",   "Antonio.ttf",      (600,),    16,  1.0,  "ascii"),
+    ("lcars20",   "Antonio.ttf",      (600,),    20,  1.0,  "ascii"),
+    ("lcars26",   "Antonio.ttf",      (600,),    26,  1.0,  "ascii"),
+    ("lcars34",   "Antonio.ttf",      (600,),    34,  1.0,  "ascii"),
+    ("lcars44",   "Antonio.ttf",      (600,),    44,  1.0,  "ascii"),
+    ("lcars60",   "Antonio.ttf",      (600,),    60,  1.0,  "ascii"),
+    ("lcars90",   "Antonio.ttf",      (700,),    90,  1.0,  "caps"),
+    ("lcars140",  "Antonio.ttf",      (700,),    140, 1.0,  "caps"),
+    ("gal16",     "Oxanium.ttf",      (600,),    16,  1.0,  "ascii"),
+    ("gal20",     "Oxanium.ttf",      (600,),    20,  1.0,  "ascii"),
+    ("gal26",     "Oxanium.ttf",      (600,),    26,  1.0,  "ascii"),
+    ("gal34",     "Oxanium.ttf",      (600,),    34,  1.0,  "ascii"),
+    ("gal44",     "Oxanium.ttf",      (600,),    44,  1.0,  "ascii"),
+    ("gal60",     "Oxanium.ttf",      (700,),    60,  1.0,  "ascii"),
+    ("gal90",     "Oxanium.ttf",      (700,),    90,  1.0,  "caps"),
 ]
 
 
@@ -105,7 +126,7 @@ def render(font, ch, xscale):
 def build(fonts_dir, name, file, axes, size, xscale, charset, jp):
     font = ImageFont.truetype(str(fonts_dir / file), size)
     font.set_variation_by_axes(list(axes))
-    chars = {"ascii": ASCII, "jp": " " + jp, "icon": " " + ICON_KANJI}[charset]
+    chars = {"ascii": ASCII, "jp": " " + jp, "icon": " " + ICON_KANJI, "caps": CAPS}[charset]
     missing = [c for c in chars if c not in " " and font.getmask(c).getbbox() is None]
     if missing:
         sys.exit(f"{name}: {file} has no glyph for {''.join(missing)}")
@@ -143,7 +164,7 @@ def preview(path, sets):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("fonts", type=pathlib.Path, help="folder with the four Noto .ttf files")
+    ap.add_argument("fonts", type=pathlib.Path, help="folder with the six .ttf files")
     ap.add_argument("--preview", type=pathlib.Path, help="also write a PNG sheet of every font")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # the Japanese list, on any console

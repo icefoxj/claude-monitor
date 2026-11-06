@@ -116,6 +116,18 @@ Shot 'anime-detail'    (@('theme anime') + $events + 'view detail a1') 2 $null 0
 Shot 'anime-saver'     @('theme anime', 'view grid', 'ping', $usage, 'view saver') 2 $null 0
 Shot 'anime-usage'     @('theme anime', 'view grid', 'ping', $page, 'view usage') 2 $null 0
 
+# ---- and in the LCARS theme, with the same sessions ----
+Shot 'lcars-dashboard' (@('theme lcars', 'view grid', 'session_clear', 'ping') + $animeSessions) 4 $null 0
+Shot 'lcars-detail'    (@('theme lcars') + $events + 'view detail a1') 2 $null 0
+Shot 'lcars-saver'     @('theme lcars', 'view grid', 'ping', $usage, 'view saver') 2 $null 0
+Shot 'lcars-usage'     @('theme lcars', 'view grid', 'ping', $page, 'view usage') 2 $null 0
+
+# ---- and in the galactic theme ----
+Shot 'galactic-dashboard' (@('theme galactic', 'view grid', 'session_clear', 'ping') + $animeSessions) 4 $null 0
+Shot 'galactic-detail'    (@('theme galactic') + $events + 'view detail a1') 2 $null 0
+Shot 'galactic-saver'     @('theme galactic', 'view grid', 'ping', $usage, 'view saver') 2 $null 0
+Shot 'galactic-usage'     @('theme galactic', 'view grid', 'ping', $page, 'view usage') 2 $null 0
+
 # ---- leave the board as we found it (in the classic theme) ----
 $done = Join-Path $OutDir 'cleanup.png'
 & $shot -PortName $PortName -OutFile $done -Setup @('theme classic', 'view grid', 'usage none', 'session_clear', 'idle') | Out-Null

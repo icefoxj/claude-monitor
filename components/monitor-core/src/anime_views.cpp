@@ -49,45 +49,6 @@ void ageText(int64_t receivedMs, int64_t nowMs, char* out, size_t size){
     else               snprintf(out, size, "%lldh%02lldm AGO", s / 3600, (s % 3600) / 60);
 }
 
-// The longest start of `s` (in bytes) that fits `room` px
-size_t fitting(LovyanGFX& g, const std::string& s, Face face, int px, int room){
-    size_t lo = 1, hi = s.size();
-    while (lo < hi){
-        const size_t mid = (lo + hi + 1) / 2;
-        if (textWidth(g, s.substr(0, mid).c_str(), face, px) <= room) lo = mid; else hi = mid - 1;
-    }
-    return lo;
-}
-
-// `s` wrapped into `width` px from (x, y), at most `maxLines` lines, the
-// last one ending in "..." when cut; returns the lines drawn
-int wrapped(LovyanGFX& g, const std::string& s, int x, int y, int width, Face face, int px,
-            int lineH, uint16_t color, int maxLines){
-    if (s.empty()){
-        text(g, "(EMPTY)", x, y, face, px, kOrangeDark);
-        return 1;
-    }
-    std::string rest = s;
-    int lines = 0;
-    while (!rest.empty() && lines < maxLines){
-        size_t cut = fitting(g, rest, face, px, width);
-        if (cut < rest.size()){
-            const size_t sp = rest.rfind(' ', cut);
-            if (sp != std::string::npos && sp > cut / 2) cut = sp + 1;
-        }
-        std::string piece = rest.substr(0, cut);
-        if (lines == maxLines - 1 && cut < rest.size()){
-            piece = fit(g, rest, face, px, width);
-            rest.clear();
-        } else {
-            rest.erase(0, cut);
-        }
-        text(g, piece.c_str(), x, y + lines * lineH, face, px, color);
-        lines++;
-    }
-    return lines;
-}
-
 }  // namespace
 
 // ---------------- a tile's rows ----------------
@@ -522,7 +483,7 @@ void inspector(M5Canvas& c, const EventLog& log, const char* statusLine, int64_t
             text(c, fit(c, upper(f.key), Face::Mono, 16, keyW - 10).c_str(), m, y + 2, Face::Mono, 16, kOrangeDim);
             int room = (detailBottom - y) / lineH;
             const int maxLines = room < 3 ? (room < 1 ? 1 : room) : 3;
-            const int lines = wrapped(c, f.value, valueX, y, valueW, Face::Mono, 20, lineH, kText, maxLines);
+            const int lines = glyphs::wrap(c, f.value, valueX, y, valueW, Face::Mono, 20, lineH, kText, maxLines, kOrangeDark);
             y += lines * lineH + 2;
         }
     }

@@ -94,7 +94,7 @@
       GET  /serial/<cmd>    write any protocol word; for "status" / "version" returns the reply
       GET  /version         ask the device who it is: board, model, chip, firmware, ESP-IDF, build, uptime, last reset
       POST /calibrate?rot=<0-3>&sign=<1|-1>&offset=<deg>   store the orientation on the device; ?reset=1 clears it
-      POST /theme?name=<classic|anime>   how the device draws (the Tab5); stored on the device
+      POST /theme?name=<classic|anime|lcars|galactic>   how the device draws (the Tab5); stored on the device
       GET  /status          daemon state, sessions, device state
       POST /release[?seconds=120]   close the port so idf.py can flash; reopens after the delay
       POST /reconnect       reopen the port now
@@ -1948,7 +1948,7 @@ function Handle-Request($ctx) {
     }
     if ($path -eq '/theme') {
         $name = $req.QueryString['name']
-        if ($name -notin 'classic', 'anime') { Send-Response $ctx 400 '{"error":"name=classic or name=anime"}'; return }
+        if ($name -notin 'classic', 'anime', 'lcars', 'galactic') { Send-Response $ctx 400 '{"error":"name=classic, anime, lcars or galactic"}'; return }
         $c = "theme $name"
         $reply = Send-SerialCommand $c
         Log "theme -> $c (reply: $reply)"

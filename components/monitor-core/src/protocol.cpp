@@ -59,12 +59,24 @@ bool isAnimated(State s){
 }
 
 const char* themeName(Theme t){
-    return t == Theme::Anime ? "anime" : "classic";
+    switch (t){
+        case Theme::Anime: return "anime";
+        case Theme::Lcars: return "lcars";
+        case Theme::Galactic: return "galactic";
+        case Theme::Classic: break;
+    }
+    return "classic";
+}
+
+Theme nextTheme(Theme t){
+    return static_cast<Theme>((static_cast<int>(t) + 1) % kThemeCount);
 }
 
 bool parseTheme(std::string_view name, Theme& out){
-    if (name == "classic"){ out = Theme::Classic; return true; }
-    if (name == "anime"){ out = Theme::Anime; return true; }
+    for (int i = 0; i < kThemeCount; i++){
+        const Theme t = static_cast<Theme>(i);
+        if (name == themeName(t)){ out = t; return true; }
+    }
     return false;
 }
 

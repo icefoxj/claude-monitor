@@ -75,7 +75,7 @@ With `-AccountUsage` the card and the tile end with one more row, **This week by
 
 ![the usage page, with made-up numbers](docs/images/tab5-usage.png)
 
-A tap on the usage tile opens a page with everything the daemon knows about your plan; a tap anywhere goes back, except on the icon in the top-right corner, which switches between the classic look and the [anime theme](#the-tab5-anime-theme).
+A tap on the usage tile opens a page with everything the daemon knows about your plan; a tap anywhere goes back, except on the icon in the top-right corner, which [switches to the next theme](#switching-themes).
 
 - **Every limit in full.** The rows of the tile, at full size, with a white tick on each bar where an even pace would have it by now: a bar past its tick is ahead of pace. Under each bar, the reset as a clock time and how far off it is (`resets Wed 07:00, in 20 h 33 min`), and where the usage ends up at the reset if it keeps the pace it had so far (`on pace for 69%`), or, when that passes 100 %, the moment it runs out (`runs out Sat 15:20`, in amber).
 - **The week as a chart**: the weekly limit hour by hour since its window started, the even-pace diagonal, and a dashed projection to the reset. The daemon keeps every reading of the weekly limit in `%LOCALAPPDATA%\claude-monitor\usage-history.jsonl` (a line when it changes, otherwise one an hour; 35 days are kept) and, the first time, fills in the current week from its own log.
@@ -92,13 +92,37 @@ The Tab5 has a second look, in the manner of the control-room screens of 90s mec
 
 <p><img src="docs/images/anime-usage.png" width="49%" alt="the usage page in the anime theme"> <img src="docs/images/anime-detail.png" width="49%" alt="the detail page in the anime theme"></p>
 
-Switch with the icon in the top-right corner of the usage page (half classic grey, half anime orange), with `theme anime` (or `theme classic`) on the serial port, or through the daemon:
+The fonts are Noto, under the SIL Open Font License (`components/monitor-core/fonts/OFL-Noto.txt`): extra-condensed Noto Sans for the English, Noto Sans Mono for data, Noto Sans JP and a squeezed Noto Serif JP Black for the Japanese. `tools/make-fonts.py` cuts them down to the characters the firmware draws, about 900 KB of flash.
+
+## The Tab5 LCARS theme
+
+![the dashboard in the LCARS theme, with made-up sessions](docs/images/lcars-dashboard.png)
+
+A third look, the LCARS consoles of 90s TV starships: pastel bars on black that turn their corners in rounded elbows, capsule buttons with black capitals in them, tall condensed type and block numbers. Each tile is framed by two elbows joined by a side bar cut into numbered blocks; the name sits at the end of the top bar, the state and a capsule with the clock at the end of the bottom one, and the elbows take the state's colour (they blink for a red one). Work in progress is a reactor column whose light runs from both ends to the chamber in the middle, with two smaller columns beside it while subagents are out and a side bar that fills with the work time. The states that want you are a capsule with the word in black between rows of bars, flashing as it comes up: ALERT, AUTHORIZATION REQUIRED for a permission; QUERY, INPUT REQUESTED; FAILURE, UNABLE TO COMPLY. STANDBY runs its bars down while a usage limit holds you, and COMPLETE, AWAITING INSTRUCTIONS ends the turn. The detail page, the usage page and the screensaver follow.
+
+<p><img src="docs/images/lcars-usage.png" width="49%" alt="the usage page in the LCARS theme"> <img src="docs/images/lcars-detail.png" width="49%" alt="the detail page in the LCARS theme"></p>
+
+The font is Antonio, under the SIL Open Font License (`components/monitor-core/fonts/OFL-Antonio.txt`), cut down the same way (about 570 KB).
+
+## The Tab5 galactic theme
+
+![the dashboard in the galactic theme, with made-up sessions](docs/images/galactic-dashboard.png)
+
+A fourth look, the vector targeting computers of 70s space-opera films: thin yellow lines on black, corner brackets instead of frames, reticles, green readouts and red alarms, angular capitals. Each tile has brackets at its corners (in the state's colour, blinking for a red state), the name and the state boxed in the header, a callsign (RED 01, RED 02...) and the clock in the footer. Work in progress is the trench run: a trench in perspective whose ribs rush at you under the targeting cross, with two wingmen in it while subagents are out and a line along the bottom that fills with the work time. The states that want you are a reticle over the word: locked on for a permission (CLEARANCE REQUIRED), searching for a question (QUERY), struck out for a failure (SYSTEM MALFUNCTION), clear when the turn is over (COMPLETE, ALL CLEAR). HOLD counts the range down while a usage limit holds you. The detail page, the usage page and the screensaver follow.
+
+<p><img src="docs/images/galactic-usage.png" width="49%" alt="the usage page in the galactic theme"> <img src="docs/images/galactic-detail.png" width="49%" alt="the detail page in the galactic theme"></p>
+
+The font is Oxanium, under the SIL Open Font License (`components/monitor-core/fonts/OFL-Oxanium.txt`), cut down the same way (about 360 KB).
+
+## Switching themes
+
+The icon in the top-right corner of the usage page has a stripe per theme, the one in use lit; each tap moves to the next: classic, anime, LCARS, galactic, classic again. The serial port takes `theme classic`, `theme anime`, `theme lcars` or `theme galactic`, and the daemon passes it on:
 
 ```powershell
-Invoke-RestMethod -Method Post 'http://localhost:47831/theme?name=anime'
+Invoke-RestMethod -Method Post 'http://localhost:47831/theme?name=lcars'
 ```
 
-The board stores the choice, so it survives restarts and updates. The fonts are Noto, under the SIL Open Font License (`components/monitor-core/fonts/OFL.txt`): extra-condensed Noto Sans for the English, Noto Sans Mono for data, Noto Sans JP and a squeezed Noto Serif JP Black for the Japanese. `tools/make-fonts.py` cuts them down to the characters the firmware draws, about 900 KB of flash. The AtomS3R keeps the classic icons: 128 pixels are too few for the texts.
+The board stores the choice, so it survives restarts and updates. The AtomS3R keeps the classic icons: 128 pixels are too few for the texts.
 
 ## Claude Desktop
 
@@ -309,7 +333,7 @@ Endpoints, all on `http://localhost:47831/`:
 | `GET /serial/status` | asks the device for its `STATUS` line and returns it |
 | `POST /state/<state>` | writes one state to the device (what `Send-ClaudeState.ps1` uses) |
 | `POST /calibrate?rot=1&sign=-1&offset=0` | stores the orientation calibration on the device (any subset) and returns its `STATUS`; `?reset=1` restores the compiled defaults |
-| `POST /theme?name=anime` | switches the Tab5 to the [anime theme](#the-tab5-anime-theme) (`name=classic` back) and returns its `STATUS`; the board stores it |
+| `POST /theme?name=anime` | switches the Tab5 to the [anime](#the-tab5-anime-theme), [LCARS](#the-tab5-lcars-theme) or [galactic](#the-tab5-galactic-theme) theme (`name=lcars`, `name=galactic`, `name=classic` back) and returns its `STATUS`; the board stores it |
 | `POST /release[?seconds=120]` | closes the port so `idf.py` or the web flasher can write; reopens after the delay |
 | `POST /reconnect` | reopens the port now |
 | `GET /health` | `{"ok":true}` |
@@ -408,7 +432,7 @@ Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over 
 
 ## The Tab5 build, in more detail
 
-`firmware/tab5/` is the ESP-IDF project (`esp32p4`). `sdkconfig.defaults` carries what the board needs: 16 MB flash in QIO mode, PSRAM at 200 MHz (M5GFX refuses the MIPI-DSI panel below that, which in ESP-IDF 5.5 sits behind `CONFIG_IDF_EXPERIMENTAL_FEATURES`), the 256 KB L2 cache, a 4 MB app partition (`partitions.csv`: the anime theme's fonts need the room; NVS stays where it was, so a stored calibration survives), and a 48 KB stack for the main task (everything is drawn from it; the 3.5 KB default overflowed, and M5GFX copies each glyph of a smooth font onto the stack, up to 28 KB for the anime theme's biggest kanji). Every tile's canvas, the inspector's and the screensaver's card live in PSRAM. When no session lines have arrived (a manual test, an older daemon) a single placeholder tile follows the aggregate words the cube uses, and that is where the icon pictures above come from.
+`firmware/tab5/` is the ESP-IDF project (`esp32p4`). `sdkconfig.defaults` carries what the board needs: 16 MB flash in QIO mode, PSRAM at 200 MHz (M5GFX refuses the MIPI-DSI panel below that, which in ESP-IDF 5.5 sits behind `CONFIG_IDF_EXPERIMENTAL_FEATURES`), the 256 KB L2 cache, a 4 MB app partition (`partitions.csv`: the themes' fonts need the room; NVS stays where it was, so a stored calibration survives), and a 48 KB stack for the main task (everything is drawn from it; the 3.5 KB default overflowed, and M5GFX copies each glyph of a smooth font onto the stack, up to 28 KB for the anime theme's biggest kanji). Every tile's canvas, the inspector's and the screensaver's card live in PSRAM. When no session lines have arrived (a manual test, an older daemon) a single placeholder tile follows the aggregate words the cube uses, and that is where the icon pictures above come from.
 
 The screen dims when the host stops talking and switches off after thirty minutes of that; ten minutes with every tile idle bring the usage screensaver instead; a tap wakes it or brings the tiles back. A two-tone beep from the speaker marks a red icon appearing on a visible tile: rising for the `!`, falling for the `X`. Verified on a Tab5 with ESP32-P4 rev v1.3 and an ST7121 panel: the USB-C is the P4's USB Serial/JTAG, so it shows up like the AtomS3R ("USB Serial Device (COMx)", VID 303A PID 1001), `idf.py flash` works without touching any button, opening the port does not reset it, and the daemon recognises the board from its `VERSION` (`features=events,touch,rotate,sessions,usage,theme`).
 
@@ -421,8 +445,8 @@ claude-monitor/
 ├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page, both themes
 │   ├── include/monitor/*.h
 │   ├── src/*.cpp
-│   ├── fonts/                      # the anime theme's fonts (VLW, from tools/make-fonts.py) and their license
-│   ├── Kconfig                     # CONFIG_MONITOR_ANIME_THEME: embed those fonts (the Tab5 does)
+│   ├── fonts/                      # the themes' fonts (VLW, from tools/make-fonts.py) and their licenses
+│   ├── Kconfig                     # CONFIG_MONITOR_{ANIME,LCARS,GALACTIC}_THEME: embed those fonts (the Tab5 does)
 │   └── idf_component.yml           # m5stack/m5unified ^0.2
 ├── firmware/atoms3r/               # ESP-IDF project for the AtomS3R (esp32s3)
 │   ├── sdkconfig.defaults          # target esp32s3, 8 MB flash
@@ -441,7 +465,7 @@ claude-monitor/
 │   ├── collect-images.sh           # names and merges a build's images for a release (used by CI)
 │   ├── Get-Screenshot.ps1          # captures the Tab5's screen into a PNG over the serial port
 │   ├── Make-ReadmeImages.ps1       # regenerates docs/images from the board
-│   └── make-fonts.py               # builds the anime theme's fonts from Noto (Pillow)
+│   └── make-fonts.py               # builds the themes' fonts from Noto, Antonio and Oxanium (Pillow)
 ├── docs/
 │   ├── index.html                  # the web flasher page, published by CI with each release
 │   └── images/                     # the pictures in this README
@@ -458,7 +482,7 @@ claude-monitor/
 
 `firmware/*/.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port. Build output (`build/`, `managed_components/`, `sdkconfig`) is ignored too; `sdkconfig.defaults` is enough to recreate it.
 
-Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size. The anime theme's icons are built the same way, with its kanji and labels drawn in anti-aliased fonts on top; they stay upright, since the Tab5 turns its whole display instead.
+Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size. The other themes' icons are built the same way, with their words drawn in anti-aliased fonts on top; they stay upright, since the Tab5 turns its whole display instead.
 
 ## Tests and CI
 

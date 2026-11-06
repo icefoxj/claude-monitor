@@ -145,6 +145,14 @@ void testParseCommand(){
         CHECK(!parseTheme("", t));
         CHECK(std::string(themeName(Theme::Anime)) == "anime");
         CHECK(std::string(themeName(Theme::Classic)) == "classic");
+        CHECK(parseTheme("lcars", t) && t == Theme::Lcars);
+        CHECK(std::string(themeName(Theme::Lcars)) == "lcars");
+        CHECK(nextTheme(Theme::Classic) == Theme::Anime);
+        CHECK(nextTheme(Theme::Anime) == Theme::Lcars);
+        CHECK(nextTheme(Theme::Lcars) == Theme::Galactic);
+        CHECK(nextTheme(Theme::Galactic) == Theme::Classic);
+        CHECK(parseTheme("galactic", t) && t == Theme::Galactic);
+        CHECK(std::string(themeName(Theme::Galactic)) == "galactic");
     }
     CHECK(kProtocolVersion == 9);
 
