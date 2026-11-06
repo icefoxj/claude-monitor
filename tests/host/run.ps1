@@ -21,7 +21,8 @@ $sources = @(
     (Join-Path $root 'components\monitor-core\src\tilt.cpp'),
     (Join-Path $root 'components\monitor-core\src\orientation.cpp'),
     (Join-Path $root 'components\monitor-core\src\usage.cpp'),
-    (Join-Path $root 'components\monitor-core\src\sounds.cpp')
+    (Join-Path $root 'components\monitor-core\src\sounds.cpp'),
+    (Join-Path $root 'components\monitor-core\src\screendiff.cpp')
 )
 $exe = Join-Path $build 'test_core.exe'
 

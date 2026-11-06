@@ -5,6 +5,7 @@
 
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
+#include "monitor/screendiff.h"
 #include "monitor/sounds.h"
 #include "monitor/tilt.h"
 #include "monitor/usage.h"
@@ -596,6 +597,51 @@ void testWav(){
     CHECK(!decodeWav(nullptr, 0, pcm, rate));
 }
 
+// The changed parts of a frame: none when equal, a tight box per run of
+// differing rows, cut at maxRows, inside the region only
+void testScreenDiff(){
+    const int W = 10, H = 8;
+    std::vector<uint16_t> a(W * H, 0), b(W * H, 0);
+    const DiffRect all{0, 0, W, H};
+    auto same = [](const DiffRect& r, int x, int y, int w, int h) {
+        return r.x == x && r.y == y && r.w == w && r.h == h;
+    };
+    CHECK(changedRects(a.data(), b.data(), W, H, all).empty());
+
+    a[2 * W + 3] = 0xF800;                       // one pixel
+    auto r = changedRects(a.data(), b.data(), W, H, all);
+    CHECK(r.size() == 1 && same(r[0], 3, 2, 1, 1));
+
+    a[3 * W + 7] = 0x07E0;                       // the next row, further right: one box
+    r = changedRects(a.data(), b.data(), W, H, all);
+    CHECK(r.size() == 1 && same(r[0], 3, 2, 5, 2));
+
+    a[6 * W + 0] = 0x001F;                       // an unchanged row between: two boxes
+    r = changedRects(a.data(), b.data(), W, H, all);
+    CHECK(r.size() == 2 && same(r[0], 3, 2, 5, 2) && same(r[1], 0, 6, 1, 1));
+
+    a[7 * W + 9] = 1;                            // the last pixel, at the image's edge
+    r = changedRects(a.data(), b.data(), W, H, all);
+    CHECK(r.size() == 2 && same(r[1], 0, 6, 10, 2));
+
+    // A region sees only what is inside it, clipped to the image
+    r = changedRects(a.data(), b.data(), W, H, DiffRect{4, 0, 20, 5});
+    CHECK(r.size() == 1 && same(r[0], 7, 3, 1, 1));
+    r = changedRects(a.data(), b.data(), W, H, DiffRect{0, 0, 3, 8});
+    CHECK(r.size() == 1 && same(r[0], 0, 6, 1, 1));
+    CHECK(changedRects(a.data(), b.data(), W, H, DiffRect{0, 0, 3, 5}).empty());
+    CHECK(changedRects(a.data(), b.data(), W, H, DiffRect{20, 20, 5, 5}).empty());
+
+    // A tall run is cut every maxRows rows
+    std::vector<uint16_t> c(W * H, 0);
+    for (int y = 0; y < 5; ++y) c[y * W + 4] = 2;
+    r = changedRects(c.data(), b.data(), W, H, all, 2);
+    CHECK(r.size() == 3 && same(r[0], 4, 0, 1, 2) && same(r[1], 4, 2, 1, 2) && same(r[2], 4, 4, 1, 1));
+
+    CHECK(changedRects(nullptr, b.data(), W, H, all).empty());
+    CHECK(changedRects(a.data(), b.data(), W, H, all, 0).empty());
+}
+
 }  // namespace
 
 int main(){
@@ -610,6 +656,7 @@ int main(){
     testUsage();
     testSounds();
     testWav();
+    testScreenDiff();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

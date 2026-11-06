@@ -55,6 +55,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "monitor/anime.h"
@@ -66,6 +67,7 @@
 #include "monitor/lcars.h"
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
+#include "monitor/screendiff.h"
 #include "monitor/screensaver.h"
 #include "monitor/screenshot.h"
 #include "monitor/sounds.h"
@@ -244,8 +246,17 @@ std::array<Slot, kMaxSessions> slots;
 Slot placeholder;   // shown while no session lines have arrived; driven by the aggregate words
 M5Canvas viewCanvas(&M5.Display);
 monitor::UsageSaver saver(M5.Display);   // the screensaver; its card sprite lives in PSRAM
-M5Canvas usageCanvas(&M5.Display);       // the bars of the usage tile in the grid
 M5Canvas pageCanvas(&M5.Display);        // the usage page, as large as the display
+
+// The tiles' texts and frames (names, clocks, the themes' rows, the usage
+// tile) are drawn into one of these two display-sized canvases, and only
+// the pixels that differ from the other one, the frame before, go to the
+// panel; then they trade places. Erasing a row and drawing it again on the
+// panel made it flash once a second, worst with the LCARS elbows.
+M5Canvas textLayerA(&M5.Display);
+M5Canvas textLayerB(&M5.Display);
+M5Canvas* textCur  = &textLayerA;
+M5Canvas* textPrev = &textLayerB;   // what the panel shows in the text regions
 monitor::UsagePage usagePage(pageCanvas);
 
 enum class View { Grid, Detail, Usage };
@@ -369,13 +380,13 @@ void clockText(int frames, char* out, size_t size){
     }
 }
 
-void drawCentred(const char* text, int cx, int cy, int bandW, const lgfx::IFont* font, uint16_t color){
-    M5.Display.setFont(font);
-    M5.Display.setTextDatum(textdatum_t::middle_center);
-    M5.Display.setTextColor(color, TFT_BLACK);
-    int h = M5.Display.fontHeight() + 8;
-    M5.Display.fillRect(cx - bandW / 2, cy - h / 2, bandW, h, TFT_BLACK);
-    M5.Display.drawString(text, cx, cy);
+void drawCentred(LovyanGFX& g, const char* text, int cx, int cy, int bandW, const lgfx::IFont* font, uint16_t color){
+    g.setFont(font);
+    g.setTextDatum(textdatum_t::middle_center);
+    g.setTextColor(color, TFT_BLACK);
+    int h = g.fontHeight() + 8;
+    g.fillRect(cx - bandW / 2, cy - h / 2, bandW, h, TFT_BLACK);
+    g.drawString(text, cx, cy);
 }
 
 int priorityOf(monitor::State s){
@@ -504,6 +515,19 @@ extern "C" void app_main(void){
         s->reset();
     };
 
+    // Where drawTexts draws: every tile but its icon (the icon's canvas is
+    // pushed on its own), the whole usage tile
+    std::vector<Rect> textRegions;
+    auto addAroundIcon = [&](const Rect& t, int ix, int iy, int size) {
+        const Rect parts[4] = {
+            { t.x, t.y, t.w, iy - t.y },                              // above the icon
+            { t.x, iy + size, t.w, t.y + t.h - (iy + size) },         // below
+            { t.x, iy, ix - t.x, size },                              // left of it
+            { ix + size, iy, t.x + t.w - (ix + size), size },         // right of it
+        };
+        for (const Rect& r : parts) if (r.w > 0 && r.h > 0) textRegions.push_back(r);
+    };
+
     // Lays the tiles (or the detail page) out for the current rotation
     auto applyLayout = [&]() {
         const int W = M5.Display.width();
@@ -512,6 +536,20 @@ extern "C" void app_main(void){
         M5.Display.fillScreen(TFT_BLACK);
         for (auto& s : slots) s.ui.setVisible(false);
         placeholder.ui.setVisible(false);
+
+        // The panel is black now, and so is the frame drawTexts compares with
+        for (M5Canvas* c : { textCur, textPrev }){
+            if (c->width() != W || c->height() != H){
+                c->deleteSprite();
+                c->setPsram(true);
+                c->setColorDepth(16);
+                if (!c->createSprite(W, H)){
+                    ESP_LOGE(TAG, "text layer allocation failed (PSRAM?)");
+                }
+            }
+        }
+        textPrev->fillScreen(TFT_BLACK);
+        textRegions.clear();
 
         if (view == View::Detail && detail && detail->used){
             // The icon column is 560 wide in landscape (720 tall), 720 wide
@@ -525,6 +563,7 @@ extern "C" void app_main(void){
             detail->place(p.iconSize, p.ix, p.iy);
             detail->ui.setVisible(true);
             detail->ui.redraw();
+            addAroundIcon(detailCol, p.ix, p.iy, p.iconSize);
             usageShown = false;
             viewDirty = true;
         } else if (view == View::Usage && hasUsage()){
@@ -563,6 +602,7 @@ extern "C" void app_main(void){
                 s->place(p.iconSize, p.ix, p.iy);
                 s->ui.setVisible(true);
                 s->ui.redraw();
+                addAroundIcon(s->tile, p.ix, p.iy, p.iconSize);
             }
             // Same bands as its neighbours: "Claude usage" where the names
             // are, the bars where the icons are (a little wider), the age
@@ -575,14 +615,7 @@ extern "C" void app_main(void){
                 usageNameY = p.nameY;
                 usageAgeY  = p.clockY;
                 usageBox   = { p.roomX, p.roomY, p.roomW, p.roomH };
-                if (usageCanvas.width() != usageBox.w || usageCanvas.height() != usageBox.h){
-                    usageCanvas.deleteSprite();
-                    usageCanvas.setPsram(true);
-                    usageCanvas.setColorDepth(16);
-                    if (!usageCanvas.createSprite(usageBox.w, usageBox.h)){
-                        ESP_LOGE(TAG, "usage canvas allocation failed");
-                    }
-                }
+                textRegions.push_back(usageTile);
             }
         }
         textDirty = true;
@@ -592,7 +625,7 @@ extern "C" void app_main(void){
     // the detail page's icon column): number, name and state, the clock; a
     // red state blinks (the anime's number tag, the LCARS elbows, the
     // galactic brackets) with the once-a-second redraw
-    auto themedTile = [&](const Rect& r, int nameY, int clockY, int number, Slot* s) {
+    auto themedTile = [&](LovyanGFX& g, const Rect& r, int nameY, int clockY, int number, Slot* s) {
         const monitor::State st = s->ui.state();
         const bool alert = st == monitor::State::WaitingUser || st == monitor::State::Error;
         const bool blinkOff = alert && (nowMs() / 1000) % 2;
@@ -610,7 +643,7 @@ extern "C" void app_main(void){
             t.color = lk.color;
             t.frame = blinkOff ? monitor::lcars::shade(lk.color, 35) : lk.color;
             t.clock = clock;
-            monitor::lcars::drawTile(M5.Display, t);
+            monitor::lcars::drawTile(g, t);
             return;
         }
         if (monitor::galacticTheme()){
@@ -624,7 +657,7 @@ extern "C" void app_main(void){
             t.color = lk.color;
             t.frame = blinkOff ? monitor::galactic::shade(lk.color, 30) : lk.color;
             t.clock = clock;
-            monitor::galactic::drawTile(M5.Display, t);
+            monitor::galactic::drawTile(g, t);
             return;
         }
         const monitor::anime::Look lk = monitor::anime::look(st);
@@ -638,16 +671,14 @@ extern "C" void app_main(void){
         t.color = lk.color;
         t.tagColor = blinkOff ? lk.dark : lk.color;
         t.clock = clock;
-        monitor::anime::drawTile(M5.Display, t);
+        monitor::anime::drawTile(g, t);
     };
 
     // The usage tile: the bars, then its name and the age of the numbers
-    auto drawUsageTile = [&]() {
-        if (!usageShown || usageCanvas.width() == 0) return;
+    auto drawUsageTile = [&](M5Canvas& g) {
+        if (!usageShown) return;
         const int32_t elapsed = static_cast<int32_t>((nowMs() - usageMs) / 1000);
-        usageCanvas.fillScreen(TFT_BLACK);
-        monitor::drawUsageRows(usageCanvas, 0, 0, usageBox.w, usageBox.h, usage, elapsed, TFT_BLACK);
-        usageCanvas.pushSprite(usageBox.x, usageBox.y);
+        monitor::drawUsageRows(g, usageBox.x, usageBox.y, usageBox.w, usageBox.h, usage, elapsed, TFT_BLACK);
         if (monitor::animeTheme()){
             char age[40];
             monitor::usageAgeText(usage.ageSec + elapsed, age, sizeof(age));
@@ -660,7 +691,7 @@ extern "C" void app_main(void){
             t.jp    = "使用状況";
             t.en    = "PLAN LIMITS";
             t.note  = note.c_str();
-            monitor::anime::drawTile(M5.Display, t);
+            monitor::anime::drawTile(g, t);
             return;
         }
         if (monitor::lcarsTheme()){
@@ -675,7 +706,7 @@ extern "C" void app_main(void){
             t.color = monitor::lcars::kOrange;
             t.frame = monitor::lcars::kOrange;
             t.note  = note.c_str();
-            monitor::lcars::drawTile(M5.Display, t);
+            monitor::lcars::drawTile(g, t);
             return;
         }
         if (monitor::galacticTheme()){
@@ -690,7 +721,7 @@ extern "C" void app_main(void){
             t.color = monitor::galactic::kYellow;
             t.frame = monitor::galactic::kYellow;
             t.note  = note.c_str();
-            monitor::galactic::drawTile(M5.Display, t);
+            monitor::galactic::drawTile(g, t);
             return;
         }
         const int32_t age = usage.ageSec + elapsed;
@@ -698,42 +729,65 @@ extern "C" void app_main(void){
         if (age < 90)        snprintf(ageText, sizeof(ageText), "just now");
         else if (age < 3600) snprintf(ageText, sizeof(ageText), "%d min ago", static_cast<int>(age / 60));
         else                 snprintf(ageText, sizeof(ageText), "%d h ago", static_cast<int>(age / 3600));
-        drawCentred("Claude usage", usageTile.x + usageTile.w / 2, usageNameY, usageTile.w, style.font, TFT_WHITE);
-        drawCentred(ageText, usageTile.x + usageTile.w / 2, usageAgeY, usageTile.w, style.font, TFT_LIGHTGREY);
+        drawCentred(g, "Claude usage", usageTile.x + usageTile.w / 2, usageNameY, usageTile.w, style.font, TFT_WHITE);
+        drawCentred(g, ageText, usageTile.x + usageTile.w / 2, usageAgeY, usageTile.w, style.font, TFT_LIGHTGREY);
     };
 
-    // Names and clocks (and the inspector on the detail page)
-    auto drawTexts = [&]() {
+    // Names and clocks (the themes' rows) and the usage tile, into g
+    auto composeTexts = [&](M5Canvas& g) {
         char clock[16];
-        if (view == View::Usage) return;   // the page has its own
         if (monitor::activeTheme() != monitor::Theme::Classic){
             if (view == View::Detail && detail){
                 int number = 1;
                 for (Slot* s : visibleSlots()){ if (s == detail) break; ++number; }
-                themedTile(detailCol, detailLabel.y + detailLabel.h / 2, detailClock.y + detailClock.h / 2, number, detail);
+                themedTile(g, detailCol, detailLabel.y + detailLabel.h / 2, detailClock.y + detailClock.h / 2, number, detail);
             } else {
                 int number = 1;
-                for (Slot* s : visibleSlots()) themedTile(s->tile, s->nameY, s->clockY, number++, s);
-                drawUsageTile();
+                for (Slot* s : visibleSlots()) themedTile(g, s->tile, s->nameY, s->clockY, number++, s);
+                drawUsageTile(g);
             }
             return;
         }
         if (view == View::Detail && detail){
             clockText(detail->ui.framesInState(), clock, sizeof(clock));
-            drawCentred(detail->label.c_str(), detailLabel.x + detailLabel.w / 2, detailLabel.y + detailLabel.h / 2,
+            drawCentred(g, detail->label.c_str(), detailLabel.x + detailLabel.w / 2, detailLabel.y + detailLabel.h / 2,
                         detailLabel.w, style.font, TFT_WHITE);
-            drawCentred(clock, detailClock.x + detailClock.w / 2, detailClock.y + detailClock.h / 2,
+            drawCentred(g, clock, detailClock.x + detailClock.w / 2, detailClock.y + detailClock.h / 2,
                         detailClock.w, style.font, TFT_LIGHTGREY);
         } else {
             for (Slot* s : visibleSlots()){
                 clockText(s->ui.framesInState(), clock, sizeof(clock));
-                drawCentred(s->label.c_str(), s->tile.x + s->tile.w / 2, s->nameY,
+                drawCentred(g, s->label.c_str(), s->tile.x + s->tile.w / 2, s->nameY,
                             s->tile.w, style.font, TFT_WHITE);
-                drawCentred(clock, s->tile.x + s->tile.w / 2, s->clockY,
+                drawCentred(g, clock, s->tile.x + s->tile.w / 2, s->clockY,
                             s->tile.w, style.font, TFT_LIGHTGREY);
             }
-            drawUsageTile();
+            drawUsageTile(g);
         }
+    };
+
+    // The texts drawn off screen, then only the pixels that changed since
+    // the last time sent to the panel (in bands of at most 64 rows, through
+    // the display's clip rect): a second's tick touches the clocks' digits
+    // and nothing else, and a box where nothing changed is left alone
+    auto drawTexts = [&]() {
+        if (view == View::Usage) return;   // the page has its own
+        if (textRegions.empty() || !textCur->getBuffer() || !textPrev->getBuffer()) return;
+        for (const Rect& r : textRegions) textCur->fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
+        composeTexts(*textCur);
+        const int W = textCur->width(), H = textCur->height();
+        const auto* cur  = static_cast<const uint16_t*>(textCur->getBuffer());
+        const auto* prev = static_cast<const uint16_t*>(textPrev->getBuffer());
+        bool pushed = false;
+        for (const Rect& r : textRegions){
+            for (const monitor::DiffRect& d : monitor::changedRects(cur, prev, W, H, { r.x, r.y, r.w, r.h })){
+                M5.Display.setClipRect(d.x, d.y, d.w, d.h);
+                textCur->pushSprite(0, 0);
+                pushed = true;
+            }
+        }
+        if (pushed) M5.Display.clearClipRect();
+        std::swap(textCur, textPrev);
     };
 
     auto drawUsagePage = [&]() {
