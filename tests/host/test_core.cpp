@@ -5,12 +5,16 @@
 
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
+#include "monitor/sounds.h"
 #include "monitor/tilt.h"
 #include "monitor/usage.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -502,6 +506,96 @@ void testUsage(){
     CHECK(usageLocalNow(c, 10) == 0);
 }
 
+void testSounds(){
+    // The classic theme's notes are the board's tones: nothing rendered
+    CHECK(renderAlert(Theme::Classic, Alert::Attention, 32000).empty());
+    CHECK(renderAlert(Theme::Classic, Alert::Failure, 32000).empty());
+    CHECK(renderAlert(Theme::Lcars, Alert::Attention, 100).empty());
+    CHECK(alertFor(State::Error) == Alert::Failure);
+    CHECK(alertFor(State::WaitingUser) == Alert::Attention);
+
+    const Theme themes[] = {Theme::Anime, Theme::Lcars, Theme::Galactic};
+    const Alert alerts[] = {Alert::Attention, Alert::Failure};
+    for (Theme t : themes){
+        for (Alert a : alerts){
+            const std::vector<int16_t> pcm = renderAlert(t, a, 32000);
+            const double sec = static_cast<double>(pcm.size()) / 32000.0;
+            CHECK(sec > 0.2 && sec < 2.5);
+            int peak = 0;
+            for (int16_t v : pcm) peak = std::max(peak, std::abs(static_cast<int>(v)));
+            CHECK(peak > 25000 && peak <= 26214);   // 80 % of full scale
+            CHECK(!pcm.empty() && pcm.front() == 0 && pcm.back() == 0);
+            // the same sound at half the rate: half the samples
+            const size_t half = renderAlert(t, a, 16000).size();
+            CHECK(half + 2 >= pcm.size() / 2 && half <= pcm.size() / 2 + 2);
+        }
+    }
+    // the red alert is the longest: three whoops, about two seconds
+    const size_t klaxon = renderAlert(Theme::Lcars, Alert::Attention, 32000).size();
+    CHECK(klaxon > 32000 * 19 / 10 && klaxon < 32000 * 21 / 10);
+}
+
+// A WAV file in memory: `extra` adds an odd-sized chunk before the data
+std::vector<uint8_t> makeWav(uint16_t format, uint16_t channels, uint32_t rate, uint16_t bits,
+                             const std::vector<uint8_t>& data, bool extra = false, uint32_t claimed = 0){
+    std::vector<uint8_t> f;
+    auto tag = [&](const char* s) { f.insert(f.end(), s, s + 4); };
+    auto u16 = [&](uint32_t v) { f.push_back(static_cast<uint8_t>(v)); f.push_back(static_cast<uint8_t>(v >> 8)); };
+    auto u32 = [&](uint32_t v) { u16(v & 0xFFFF); u16(v >> 16); };
+    tag("RIFF"); u32(0); tag("WAVE");
+    tag("fmt "); u32(16); u16(format); u16(channels); u32(rate);
+    u32(rate * channels * bits / 8); u16(static_cast<uint16_t>(channels * bits / 8)); u16(bits);
+    if (extra){ tag("LIST"); u32(3); f.push_back('a'); f.push_back('b'); f.push_back('c'); f.push_back(0); }
+    tag("data"); u32(claimed ? claimed : static_cast<uint32_t>(data.size()));
+    f.insert(f.end(), data.begin(), data.end());
+    return f;
+}
+
+void testWav(){
+    std::vector<int16_t> pcm;
+    uint32_t rate = 0;
+    // 16-bit mono, little-endian: 1000, -1000, 32767
+    std::vector<uint8_t> d16 = {0xE8, 0x03, 0x18, 0xFC, 0xFF, 0x7F};
+    std::vector<uint8_t> f = makeWav(1, 1, 44100, 16, d16);
+    CHECK(decodeWav(f.data(), f.size(), pcm, rate));
+    CHECK(rate == 44100 && pcm.size() == 3 && pcm[0] == 1000 && pcm[1] == -1000 && pcm[2] == 32767);
+    // read byte by byte: the same file one byte off its alignment
+    std::vector<uint8_t> shifted(f.size() + 1);
+    std::copy(f.begin(), f.end(), shifted.begin() + 1);
+    CHECK(decodeWav(shifted.data() + 1, f.size(), pcm, rate) && pcm.size() == 3 && pcm[1] == -1000);
+    // stereo is averaged, an odd chunk before the data is skipped with its pad byte
+    f = makeWav(1, 2, 22050, 16, {0xE8, 0x03, 0xD0, 0x07, 0x00, 0x00, 0x18, 0xFC}, true);
+    CHECK(decodeWav(f.data(), f.size(), pcm, rate));
+    CHECK(rate == 22050 && pcm.size() == 2 && pcm[0] == 1500 && pcm[1] == -500);
+    // 8-bit is unsigned around 128
+    f = makeWav(1, 1, 8000, 8, {128, 255, 0});
+    CHECK(decodeWav(f.data(), f.size(), pcm, rate));
+    CHECK(pcm.size() == 3 && pcm[0] == 0 && pcm[1] == 127 * 256 && pcm[2] == -128 * 256);
+    // a data chunk claiming more than is there (a streamed file): what is there, whole frames
+    f = makeWav(1, 1, 16000, 16, {1, 0, 2, 0, 3}, false, 0xFFFFFFFF);
+    CHECK(decodeWav(f.data(), f.size(), pcm, rate) && pcm.size() == 2 && pcm[1] == 2);
+    // extensible format with PCM inside
+    f = makeWav(1, 1, 16000, 16, d16);
+    f[16] = 40;                                   // fmt chunk of 40 bytes
+    f[20] = 0xFE; f[21] = 0xFF;                   // WAVE_FORMAT_EXTENSIBLE
+    std::vector<uint8_t> ext(24, 0);
+    ext[0] = 22; ext[8] = 1;                      // cbSize, subformat PCM
+    f.insert(f.begin() + 36, ext.begin(), ext.end());
+    CHECK(decodeWav(f.data(), f.size(), pcm, rate) && pcm.size() == 3 && pcm[0] == 1000);
+    // refused: compressed, 24-bit, five channels, not a WAV, empty data
+    f = makeWav(3, 1, 16000, 32, {0, 0, 0, 0});
+    CHECK(!decodeWav(f.data(), f.size(), pcm, rate) && pcm.empty());
+    f = makeWav(1, 1, 16000, 24, {0, 0, 0});
+    CHECK(!decodeWav(f.data(), f.size(), pcm, rate));
+    f = makeWav(1, 5, 16000, 16, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    CHECK(!decodeWav(f.data(), f.size(), pcm, rate));
+    f = makeWav(1, 1, 16000, 16, {});
+    CHECK(!decodeWav(f.data(), f.size(), pcm, rate));
+    const uint8_t junk[] = "ID3 this is an mp3";
+    CHECK(!decodeWav(junk, sizeof(junk), pcm, rate) && rate == 0);
+    CHECK(!decodeWav(nullptr, 0, pcm, rate));
+}
+
 }  // namespace
 
 int main(){
@@ -514,6 +608,8 @@ int main(){
     testTilt();
     testOrientation();
     testUsage();
+    testSounds();
+    testWav();
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

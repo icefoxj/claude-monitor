@@ -22,7 +22,7 @@ endif()
 idf_component_register(
     SRCS "src/protocol.cpp" "src/tilt.cpp" "src/orientation.cpp" "src/icons.cpp" "src/ui.cpp"
          "src/version.cpp" "src/calibration.cpp" "src/eventlog.cpp" "src/eventview.cpp" "src/screenshot.cpp"
-         "src/usage.cpp" "src/usageview.cpp" "src/usagepage.cpp" "src/screensaver.cpp"
+         "src/usage.cpp" "src/sounds.cpp" "src/usageview.cpp" "src/usagepage.cpp" "src/screensaver.cpp"
          "src/theme.cpp" "src/glyphs.cpp" "src/anime.cpp" "src/anime_icons.cpp" "src/anime_views.cpp"
          "src/lcars.cpp" "src/lcars_icons.cpp" "src/lcars_views.cpp"
          "src/galactic.cpp" "src/galactic_icons.cpp" "src/galactic_views.cpp"

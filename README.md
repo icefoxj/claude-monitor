@@ -5,7 +5,7 @@ A desk status light for [Claude Code](https://claude.com/claude-code), on M5Stac
 Two devices are supported by the same firmware component and the same daemon:
 
 - the **M5Stack AtomS3R** (ESP32-S3), a 24 mm cube with a 128×128 display: one icon, the most urgent state among your sessions, kept upright by the accelerometer as you turn it;
-- the **M5Stack Tab5** (ESP32-P4), a 5" 1280×720 touch tablet: one tile per Claude Code session (up to six), each with the project's name, its icon and a clock, and a tap on a tile opens a page with every field of the last hook event for that session. It turns with gravity like a tablet and beeps when a red icon appears.
+- the **M5Stack Tab5** (ESP32-P4), a 5" 1280×720 touch tablet: one tile per Claude Code session (up to six), each with the project's name, its icon and a clock, and a tap on a tile opens a page with every field of the last hook event for that session. It turns with gravity like a tablet and sounds an alert when a red icon appears, in the voice of the theme it wears.
 
 Both have prebuilt firmware in every [release](https://github.com/icefoxj/claude-monitor/releases) (the Tab5 since 1.3.0), and the cube can be flashed from the browser.
 
@@ -23,9 +23,9 @@ Every state is one icon, chosen so that it reads from a distance: shape and colo
 | ![subagents](docs/images/icon-subagents.png) | **Processing with subagents** | The gear shrinks and gains a counter-rotating satellite while one or more subagents run under this session. The count resets when the turn ends. | `SubagentStart` / `SubagentStop` |
 | ![tool](docs/images/icon-tool.png) | **External tool running** (EXT badge) | A process started by a tool is alive right now: a build, a test run, a shell command, as opposed to the model thinking. The daemon sees the process appear, which is also how it knows you approved a permission. | the daemon's process watching (`tool_start` / `tool_stop`) |
 | ![compacting](docs/images/icon-compacting.png) | **Compacting** (`compacting`) | Claude Code is compacting the context; back in a moment. Grey, spinning. | `PreCompact`; ends at the compaction's `SubagentStop` or `PostCompact` |
-| ![waiting](docs/images/icon-waiting.png) | **Waiting for you** (`waiting_user`) | A permission prompt is on the terminal, or a usage-limit resume needs Enter. Pulses three times when it appears; the Tab5 plays a rising two-tone beep. | `Notification` `permission_prompt`, `quota_auto_resume_stale` |
+| ![waiting](docs/images/icon-waiting.png) | **Waiting for you** (`waiting_user`) | A permission prompt is on the terminal, or a usage-limit resume needs Enter. Pulses three times when it appears; the Tab5 sounds its theme's alert (a rising two-tone beep in the classic one). | `Notification` `permission_prompt`, `quota_auto_resume_stale` |
 | ![question](docs/images/icon-question.png) | **Question** (`question`) | Claude asked you something (`AskUserQuestion`), or an MCP server or a background agent needs your input. Pulses. | `PreToolUse` `AskUserQuestion`, `Notification` `elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input` |
-| ![error](docs/images/icon-error.png) | **Error** (`error`) | The turn ended with an API error: authentication, billing, server, … Look at the terminal. Pulses; the Tab5 plays a falling beep. | `StopFailure` (every type but `rate_limit`), `Notification` `quota_auto_resume_disabled` |
+| ![error](docs/images/icon-error.png) | **Error** (`error`) | The turn ended with an API error: authentication, billing, server, … Look at the terminal. Pulses; the Tab5 sounds its theme's failure (a falling beep in the classic one). | `StopFailure` (every type but `rate_limit`), `Notification` `quota_auto_resume_disabled` |
 | ![paused](docs/images/icon-paused.png) | **Paused** (`paused`) | A usage limit was hit and Claude Code is waiting for it to reset. The sand runs for twelve seconds, the glass turns over, and again. | `StopFailure` `rate_limit` |
 | ![idle](docs/images/icon-idle.png) | **Idle** (`idle`) | Done. Waiting for your next prompt. | `Stop`, `SessionStart`, `PostCompact` (manual) |
 | *(screen off)* | **Off** (`off`) | The last session ended. Any new state switches the screen back on. | `SessionEnd` |
@@ -92,6 +92,8 @@ The Tab5 has a second look, in the manner of the control-room screens of 90s mec
 
 <p><img src="docs/images/anime-usage.png" width="49%" alt="the usage page in the anime theme"> <img src="docs/images/anime-detail.png" width="49%" alt="the detail page in the anime theme"></p>
 
+It has its own [sounds](#theme-sounds): a warning is three bursts of three sharp high beeps, an error two buzzing wails falling.
+
 The fonts are Noto, under the SIL Open Font License (`components/monitor-core/fonts/OFL-Noto.txt`): extra-condensed Noto Sans for the English, Noto Sans Mono for data, Noto Sans JP and a squeezed Noto Serif JP Black for the Japanese. `tools/make-fonts.py` cuts them down to the characters the firmware draws, about 900 KB of flash.
 
 ## The Tab5 LCARS theme
@@ -101,6 +103,8 @@ The fonts are Noto, under the SIL Open Font License (`components/monitor-core/fo
 A third look, the LCARS consoles of 90s TV starships: pastel bars on black that turn their corners in rounded elbows, capsule buttons with black capitals in them, tall condensed type and block numbers. Each tile is framed by two elbows joined by a side bar cut into numbered blocks; the name sits at the end of the top bar, the state and a capsule with the clock at the end of the bottom one, and the elbows take the state's colour (they blink for a red one). Work in progress is a reactor column whose light runs from both ends to the chamber in the middle, with two smaller columns beside it while subagents are out and a side bar that fills with the work time. The states that want you are a capsule with the word in black between rows of bars, flashing as it comes up: ALERT, AUTHORIZATION REQUIRED for a permission; QUERY, INPUT REQUESTED; FAILURE, UNABLE TO COMPLY. STANDBY runs its bars down while a usage limit holds you, and COMPLETE, AWAITING INSTRUCTIONS ends the turn. The detail page, the usage page and the screensaver follow.
 
 <p><img src="docs/images/lcars-usage.png" width="49%" alt="the usage page in the LCARS theme"> <img src="docs/images/lcars-detail.png" width="49%" alt="the detail page in the LCARS theme"></p>
+
+A permission sounds the red-alert klaxon, three rising whoops; an error is the computer's falling three-note "unable to comply" ([sounds](#theme-sounds), and how to play the original ones instead).
 
 The font is Antonio, under the SIL Open Font License (`components/monitor-core/fonts/OFL-Antonio.txt`), cut down the same way (about 570 KB).
 
@@ -112,6 +116,8 @@ A fourth look, the vector targeting computers of 70s space-opera films: thin yel
 
 <p><img src="docs/images/galactic-usage.png" width="49%" alt="the usage page in the galactic theme"> <img src="docs/images/galactic-detail.png" width="49%" alt="the detail page in the galactic theme"></p>
 
+A permission sounds the targeting computer locking on, beeps closing in faster and higher until the tone holds; an error powers down with a stutter ([sounds](#theme-sounds)).
+
 The font is Oxanium, under the SIL Open Font License (`components/monitor-core/fonts/OFL-Oxanium.txt`), cut down the same way (about 360 KB).
 
 ## Switching themes
@@ -122,7 +128,48 @@ The icon in the top-right corner of the usage page has a stripe per theme, the o
 Invoke-RestMethod -Method Post 'http://localhost:47831/theme?name=lcars'
 ```
 
-The board stores the choice, so it survives restarts and updates. The AtomS3R keeps the classic icons: 128 pixels are too few for the texts.
+The new theme announces itself with its alert as the screen changes (see [Theme sounds](#theme-sounds)). The board stores the choice, so it survives restarts and updates. The AtomS3R keeps the classic icons: 128 pixels are too few for the texts.
+
+## Theme sounds
+
+The Tab5 sounds an alert when a tile turns red, and when you switch themes it plays the new theme's alert with the new screen. Each theme has two sounds:
+
+| Theme | A permission is wanted (and the theme switch) | An error |
+|---|---|---|
+| classic | two notes rising | two notes falling |
+| anime | three bursts of three sharp high beeps, like a HUD warning | two buzzing wails falling |
+| LCARS | a red-alert klaxon, three rising whoops | the computer's falling three-note "unable to comply" |
+| galactic | a targeting computer locking on: beeps closing in faster and higher, then a held tone | a system powering down with a stutter, two blips |
+
+Out of the box these are **synthesised** on the board (the classic notes as plain tones, the others in `components/monitor-core/src/sounds.cpp`): a few notes and sweeps in the manner of each look, rendered into PSRAM the first time they play. They are not the sounds of the films and shows that inspired the themes. Those recordings belong to their studios, so they are not in this repository and never will be, and the prebuilt images in the releases carry only the synthesised sounds.
+
+### Using the original sounds
+
+If you have your own copy of a sound you would rather hear (the show's red alert for the LCARS theme, say), your build can play it instead. It takes a build from source, since the recording is embedded in the firmware:
+
+1. **Get the sound** from a copy you are entitled to use. Keep only the part you want to hear, a second or a few: it plays once, in full, each time.
+2. **Convert it to WAV**, uncompressed PCM, 8 or 16 bits, mono or stereo, any sample rate from 4 to 192 kHz. Mono at 32 kHz is plenty for the Tab5's speaker and takes 64 KB a second (stereo is mixed down anyway). With ffmpeg, keeping the first three seconds:
+   ```
+   ffmpeg -i red-alert.mp3 -t 3 -ac 1 -ar 32000 -c:a pcm_s16le lcars-attention.wav
+   ```
+   In Audacity: select the part, then *File → Export Audio*, format *WAV*, encoding *Signed 16-bit PCM*. A recording mastered loud plays louder than the synthesised sounds; `-af volume=-6dB` in the ffmpeg line (or *Effect → Amplify* in Audacity) brings it down.
+3. **Name it and put it in `firmware/tab5/sounds/`**. The name says which sound it replaces:
+
+   | File | Replaces |
+   |---|---|
+   | `classic-attention.wav` | the classic theme's permission sound and theme-switch sound |
+   | `classic-failure.wav` | the classic theme's error sound |
+   | `anime-attention.wav` / `anime-failure.wav` | the anime theme's |
+   | `lcars-attention.wav` / `lcars-failure.wav` | the LCARS theme's |
+   | `galactic-attention.wav` / `galactic-failure.wav` | the galactic theme's |
+
+   Any sound without a file stays synthesised, so you can replace one and keep the rest.
+4. **Build and flash** the Tab5 as in [Build and flash](#build-and-flash) (`idf.py -p COMx flash` in `firmware/tab5`). The build notices files added to or removed from the folder by itself.
+5. **Check it.** The boot log (`idf.py -p COMx monitor`, or the first lines on the port) names each recording in use, `sound lcars-attention: recording, 2.10 s at 32000 Hz`, or warns that one was ignored because it is not an uncompressed 8/16-bit mono or stereo WAV (an MP3 renamed, a 24-bit export). To hear an attention sound, switch to its theme (`theme lcars`, or a tap on the usage page's switch); an error sound plays the next time a tile shows the red `X`.
+
+To go back to the synthesised sound, delete the file and build again. The app partition has about 1.5 MB to spare for recordings.
+
+Everything in the folder but its README is gitignored (the WAV files and whatever you converted them from): it stays on your machine and in your build. If you fork the project or publish images of your own, keep the recordings out of them.
 
 ## Claude Desktop
 
@@ -434,7 +481,7 @@ Without it, send `calibrate rot=1 sign=-1 offset=0` (or `calibrate reset`) over 
 
 `firmware/tab5/` is the ESP-IDF project (`esp32p4`). `sdkconfig.defaults` carries what the board needs: 16 MB flash in QIO mode, PSRAM at 200 MHz (M5GFX refuses the MIPI-DSI panel below that, which in ESP-IDF 5.5 sits behind `CONFIG_IDF_EXPERIMENTAL_FEATURES`), the 256 KB L2 cache, a 4 MB app partition (`partitions.csv`: the themes' fonts need the room; NVS stays where it was, so a stored calibration survives), and a 48 KB stack for the main task (everything is drawn from it; the 3.5 KB default overflowed, and M5GFX copies each glyph of a smooth font onto the stack, up to 28 KB for the anime theme's biggest kanji). Every tile's canvas, the inspector's and the screensaver's card live in PSRAM. When no session lines have arrived (a manual test, an older daemon) a single placeholder tile follows the aggregate words the cube uses, and that is where the icon pictures above come from.
 
-The screen dims when the host stops talking and switches off after thirty minutes of that; ten minutes with every tile idle bring the usage screensaver instead; a tap wakes it or brings the tiles back. A two-tone beep from the speaker marks a red icon appearing on a visible tile: rising for the `!`, falling for the `X`. Verified on a Tab5 with ESP32-P4 rev v1.3 and an ST7121 panel: the USB-C is the P4's USB Serial/JTAG, so it shows up like the AtomS3R ("USB Serial Device (COMx)", VID 303A PID 1001), `idf.py flash` works without touching any button, opening the port does not reset it, and the daemon recognises the board from its `VERSION` (`features=events,touch,rotate,sessions,usage,theme`).
+The screen dims when the host stops talking and switches off after thirty minutes of that; ten minutes with every tile idle bring the usage screensaver instead; a tap wakes it or brings the tiles back. A sound from the speaker marks a red icon appearing on a visible tile: in the classic theme a two-tone beep, rising for the `!` and falling for the `X`; in the others the theme's alert and failure sounds. Verified on a Tab5 with ESP32-P4 rev v1.3 and an ST7121 panel: the USB-C is the P4's USB Serial/JTAG, so it shows up like the AtomS3R ("USB Serial Device (COMx)", VID 303A PID 1001), `idf.py flash` works without touching any button, opening the port does not reset it, and the daemon recognises the board from its `VERSION` (`features=events,touch,rotate,sessions,usage,theme`).
 
 ## Project layout
 
@@ -454,6 +501,7 @@ claude-monitor/
 │   ├── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG, NVS calibration
 │   └── .vscode/                    # c_cpp_properties.json and launch.json (settings.json is not committed)
 ├── firmware/tab5/                  # ESP-IDF project for the Tab5 (esp32p4): tiles, detail page, touch, speaker
+│   └── sounds/                     # your own WAVs to replace alert sounds, local builds only (gitignored)
 │   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz, the anime theme
 │   ├── partitions.csv              # a 4 MB app partition
 │   └── main/main.cpp

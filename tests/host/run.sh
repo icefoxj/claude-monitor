@@ -10,5 +10,6 @@ mkdir -p tests/host/build
     components/monitor-core/src/tilt.cpp \
     components/monitor-core/src/orientation.cpp \
     components/monitor-core/src/usage.cpp \
+    components/monitor-core/src/sounds.cpp \
     -o tests/host/build/test_core
 tests/host/build/test_core

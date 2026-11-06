@@ -78,3 +78,9 @@ CLAUDE.local.md
 *.workspace # General workspace files, can be from various tools
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
+
+# Recordings that replace the Tab5's alert sounds, and whatever they were
+# converted from: for a local build only, never committed (see
+# firmware/tab5/sounds/README.md)
+firmware/tab5/sounds/*
+!firmware/tab5/sounds/README.md

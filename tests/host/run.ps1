@@ -20,7 +20,8 @@ $sources = @(
     (Join-Path $root 'components\monitor-core\src\protocol.cpp'),
     (Join-Path $root 'components\monitor-core\src\tilt.cpp'),
     (Join-Path $root 'components\monitor-core\src\orientation.cpp'),
-    (Join-Path $root 'components\monitor-core\src\usage.cpp')
+    (Join-Path $root 'components\monitor-core\src\usage.cpp'),
+    (Join-Path $root 'components\monitor-core\src\sounds.cpp')
 )
 $exe = Join-Path $build 'test_core.exe'
 
