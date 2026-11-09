@@ -2,7 +2,7 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
-## Unreleased
+## 1.5.0 — 2026-11-09
 
 ### Added
 
@@ -21,6 +21,7 @@ Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub rel
 
 ### Fixed
 
+- The `VERSION` line was cut at 256 bytes, which the Tab5's longer `features=` reached: it ended at `sha=` and lost `uptime=` and `reset=`. Both boards now format it into 512.
 - Tab5: the tiles' boxes no longer flash once a second, which was worst with the LCARS theme's elbows. The names, clocks, the themes' frames and the usage tile were erased and drawn again on the panel every second. They are now drawn off screen, and only the pixels that changed since the last time reach the panel: a clock's tick sends its digits, and a box where nothing changed is left alone (`monitor-core`'s `screendiff.cpp`, host-tested).
 - Tiles named after a subfolder (`memory`, `src`, ...) instead of the project. The `X-Claude-Project` header the hooks send arrives empty, so the daemon named a session after the `cwd` of the first event it saw, which follows the shell's `cd`: right when that was the session's start, wrong for every session already running when the daemon restarted. It now reads where the session started from the first `cwd` in its transcript.
 - A session left idle no longer keeps the grey gear for hours. Claude Code now compacts a session that sat idle (54 minutes after its last answer, before the prompt cache expires), and sends the end of that compaction (`PostCompact`) only with the next prompt, so its tile showed "compacting" until you used it again. The daemon now ends a compaction when the subagent that runs it stops (it is the one `SubagentStop` without a matching `SubagentStart`) and puts the session back where it was: the green check for an idle session, the gear for a turn in progress. A compaction that sends nothing for ten minutes (`-CompactTimeoutMinutes`) ends the same way. Without the daemon the grey gear still stays until the next prompt.

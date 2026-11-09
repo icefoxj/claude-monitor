@@ -284,7 +284,7 @@ void writeAll(const char* data, int n){
 }
 
 void sendVersion(){
-    char msg[256];
+    char msg[512];   // 256 cut the line at sha= once features= listed six words
     int n = monitor::formatVersionLine(msg, sizeof(msg) - 1, kBoard, kFeatures);
     if (n > static_cast<int>(sizeof(msg)) - 2){
         n = sizeof(msg) - 2;

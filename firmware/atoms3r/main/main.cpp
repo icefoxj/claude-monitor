@@ -87,7 +87,7 @@ void writeLine(const char* msg, int n){
 
 // Reply to "version": hardware and firmware identification
 void sendVersion(){
-    char msg[256];
+    char msg[512];   // the Tab5's line outgrew 256; a long fw= could do it here too
     int n = monitor::formatVersionLine(msg, sizeof(msg) - 1, kBoard, kFeatures);
     if (n > static_cast<int>(sizeof(msg)) - 2){
         n = sizeof(msg) - 2;   // truncated: still terminate the line

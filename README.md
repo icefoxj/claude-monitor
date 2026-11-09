@@ -167,7 +167,7 @@ If you have your own copy of a sound you would rather hear (the show's red alert
 4. **Build and flash** the Tab5 as in [Build and flash](#build-and-flash) (`idf.py -p COMx flash` in `firmware/tab5`). The build notices files added to or removed from the folder by itself.
 5. **Check it.** The boot log (`idf.py -p COMx monitor`, or the first lines on the port) names each recording in use, `sound lcars-attention: recording, 2.10 s at 32000 Hz`, or warns that one was ignored because it is not an uncompressed 8/16-bit mono or stereo WAV (an MP3 renamed, a 24-bit export). To hear an attention sound, switch to its theme (`theme lcars`, or a tap on the usage page's switch); an error sound plays the next time a tile shows the red `X`.
 
-To go back to the synthesised sound, delete the file and build again. The app partition has about 1.5 MB to spare for recordings.
+To go back to the synthesised sound, delete the file and build again. The app partition has about 1.3 MB to spare for recordings, some 20 seconds of mono 32 kHz sound.
 
 Everything in the folder but its README is gitignored (the WAV files and whatever you converted them from): it stays on your machine and in your build. If you fork the project or publish images of your own, keep the recordings out of them.
 
@@ -193,7 +193,7 @@ The Anthropic API does not expose session state, so the device cannot poll. Inst
 
 The daemon keeps one state per session and sends the cube the most urgent one (error > `!` = `?` > hourglass > compacting > processing > idle), the Tab5 one line per session, and both a heartbeat every 30 s. It also watches the process tree: Claude Code has no hook for the moment you approve a permission, but the approved tool's process appears under the session's `claude.exe` within half a second, and that is when the red sign goes back to the gear (and the EXT badge comes on).
 
-The protocol is one command per line, `\n`-terminated, no JSON, no handshake. State words: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Counters and flags: `subagent_start` / `subagent_stop`, `tool_start` / `tool_stop`. `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Queries: `status` answers with one `STATUS` line (state, calibration in effect, session codes, link, work seconds, screen) and `version` with one `VERSION` line (board, model detected, chip, flash, firmware, ESP-IDF and M5Unified versions, protocol version, `features=`, build time, uptime, reset reason); the Tab5 also answers `screenshot` with its display as text (what made the pictures above), and `view grid` / `view detail <id>` does what a tap does. Two kinds of line exist only for boards that ask for them in `features=`: `event <name>` with tab-separated `key=value` pairs carries a whole hook event (`events`), and `session <id>` with `label=`, `state=`, `subagents=`, `tool=`, `project=` describes one live session (`sessions`), with `session_end <id>` and `session_clear`. A third, `usage <source>` with one `limit=<label>|<percent>|<seconds to reset>|<severity>` per limit, feeds the Tab5's usage tile and screensaver, with `split=<app>:<percent>|...` for the week by app (`usage`, protocol 7); protocol 8 adds the usage page's fields to the same line (`now=` the host's clock and UTC offset, `windows=` each limit's length, `plan=`, `extra=`, `history=` the week hour by hour, one `project=<name>|<week %>|<today %>` per project), which older boards skip, and `view usage`. The AtomS3R never receives any of them.
+The protocol is one command per line, `\n`-terminated, no JSON, no handshake. State words: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Counters and flags: `subagent_start` / `subagent_stop`, `tool_start` / `tool_stop`. `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Queries: `status` answers with one `STATUS` line (state, calibration in effect, session codes, link, work seconds, screen) and `version` with one `VERSION` line (board, model detected, chip, flash, firmware, ESP-IDF and M5Unified versions, protocol version, `features=`, build time, uptime, reset reason); the Tab5 also answers `screenshot` with its display as text (what made the pictures above), and `view grid` / `view detail <id>` does what a tap does. Two kinds of line exist only for boards that ask for them in `features=`: `event <name>` with tab-separated `key=value` pairs carries a whole hook event (`events`), and `session <id>` with `label=`, `state=`, `subagents=`, `tool=`, `project=` describes one live session (`sessions`), with `session_end <id>` and `session_clear`. A third, `usage <source>` with one `limit=<label>|<percent>|<seconds to reset>|<severity>` per limit, feeds the Tab5's usage tile and screensaver, with `split=<app>:<percent>|...` for the week by app (`usage`, protocol 7); protocol 8 adds the usage page's fields to the same line (`now=` the host's clock and UTC offset, `windows=` each limit's length, `plan=`, `extra=`, `history=` the week hour by hour, one `project=<name>|<week %>|<today %>` per project), which older boards skip, and `view usage`. Protocol 9 adds `theme <classic|anime|lcars|galactic>` for a board that lists `theme` (the Tab5; the cube answers `ERROR`). The AtomS3R never receives the `event`, `session` and `usage` lines.
 
 The daemon is optional: the hooks can also run a one-line script per event that writes to the port directly (see [Without the daemon](#without-the-daemon)). The daemon is better in every way that matters: no process start-up per event, a single writer on the port, events in order, a log with timestamps, per-session tracking, approval detection.
 
@@ -210,7 +210,7 @@ On Windows, with the daemon (the recommended way). What you need: one of the boa
 **1. Put the firmware on the board.** Three ways, pick one:
 
 - The **[web flasher](https://icefoxj.github.io/claude-monitor/)** (Chrome or Edge; Firefox and Safari have no Web Serial): plug the AtomS3R in, open the page, click, pick the port. Nothing to install. (The page carries the AtomS3R image; the Tab5 uses the next option.)
-- **`esptool`** with the files of a [release](https://github.com/icefoxj/claude-monitor/releases) (`pip install esptool`; each release carries four files per board, the three parts and a merged image; the Tab5's since 1.3.0). Replace the port and the version (`v1.3.0`, for example). Note the Tab5's bootloader goes to `0x2000`, not `0x0`: that is where the ESP32-P4 looks for it.
+- **`esptool`** with the files of a [release](https://github.com/icefoxj/claude-monitor/releases) (`pip install esptool`; each release carries four files per board, the three parts and a merged image; the Tab5's since 1.3.0). Replace the port and the version (`v1.5.0`, for example). Note the Tab5's bootloader goes to `0x2000`, not `0x0`: that is where the ESP32-P4 looks for it. Since 1.5.0 the Tab5's app (2.6 MB with the themes' fonts) needs the 4 MB partition table that comes with it, so write all three parts as below, not the app alone; the table keeps the NVS partition where it was.
 
   ```
   python -m esptool --chip esp32s3 -p COM5 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 8MB --flash_freq 80m 0x0 claude-monitor-atoms3r-vX.Y.Z-bootloader.bin 0x8000 claude-monitor-atoms3r-vX.Y.Z-partition-table.bin 0x10000 claude-monitor-atoms3r-vX.Y.Z.bin
@@ -341,11 +341,11 @@ The script uses .NET's `SerialPort`, pins DTR/RTS low so the board never resets,
 `status` and `version` answer with a line. On Linux/macOS read it with `cat /dev/ttyACM0` in a second terminal before sending the word; on Windows use the daemon (`GET /serial/status`, `GET /version`) or any serial terminal at 115200 baud with DTR and RTS off:
 
 ```
-VERSION board=atoms3r model=M5Stack-AtomS3R chip=esp32s3 rev=v0.2 cores=2 flash=8MB fw=v1.2.0 idf=v5.5 m5unified=0.2.21 protocol=6 features=- project=claude-monitor-atoms3r built=2026-09-10T20:15:42 sha=a66e423b uptime=418 reset=poweron
-VERSION board=tab5 model=M5Stack-Tab5 chip=esp32p4 rev=v1.3 cores=2 flash=16MB fw=v1.3.0 idf=v5.5 m5unified=0.2.21 protocol=6 features=events,touch,rotate,sessions project=claude-monitor-tab5 built=2026-09-26T16:51:58 sha=c3b2d5ba uptime=20 reset=usb
+VERSION board=atoms3r model=M5Stack-AtomS3R chip=esp32s3 rev=v0.2 cores=2 flash=8MB fw=v1.5.0 idf=v5.5 m5unified=0.2.21 protocol=9 features=- project=claude-monitor-atoms3r built=2026-11-09T14:02:11 sha=a66e423b uptime=418 reset=poweron
+VERSION board=tab5 model=M5Stack-Tab5 chip=esp32p4 rev=v1.3 cores=2 flash=16MB fw=v1.5.0 idf=v5.5 m5unified=0.2.21 protocol=9 features=events,touch,rotate,sessions,usage,theme project=claude-monitor-tab5 built=2026-11-09T14:02:11 sha=b79c41e0 uptime=20 reset=usb
 ```
 
-The second line is the Tab5 right after flashing the 1.3.0 release; `features=` is what tells the daemon it wants the per-session and event lines.
+The second line is a Tab5 just after flashing 1.5.0; `features=` is what tells the daemon it wants the per-session and event lines, the usage and the theme command.
 
 `board` is what the firmware was built for and `model` what M5Unified detected at boot, so the two disagree when an image runs on the wrong module. `fw` is the git tag the build came from (`-N-gHASH` after it means N commits past the tag, `-dirty` an uncommitted tree). The device also sends this line once, unasked, when it boots, so the daemon log records every reboot with its version.
 
@@ -489,7 +489,7 @@ Everything that does not depend on the hardware is an ESP-IDF component; each bo
 
 ```
 claude-monitor/
-├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page, both themes
+├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page, the four themes, their sounds
 │   ├── include/monitor/*.h
 │   ├── src/*.cpp
 │   ├── fonts/                      # the themes' fonts (VLW, from tools/make-fonts.py) and their licenses
@@ -501,10 +501,10 @@ claude-monitor/
 │   ├── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG, NVS calibration
 │   └── .vscode/                    # c_cpp_properties.json and launch.json (settings.json is not committed)
 ├── firmware/tab5/                  # ESP-IDF project for the Tab5 (esp32p4): tiles, detail page, touch, speaker
-│   └── sounds/                     # your own WAVs to replace alert sounds, local builds only (gitignored)
-│   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz, the anime theme
+│   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz, the three themes' fonts
 │   ├── partitions.csv              # a 4 MB app partition
-│   └── main/main.cpp
+│   ├── main/main.cpp
+│   └── sounds/                     # your own WAVs to replace alert sounds, local builds only (gitignored)
 ├── host/
 │   ├── Monitor-Daemon.ps1          # the daemon: port owner, HTTP hook receiver, per-session state, process watching
 │   ├── Install-MonitorDaemon.ps1   # registers it as a logon scheduled task (Windows)
@@ -517,7 +517,7 @@ claude-monitor/
 ├── docs/
 │   ├── index.html                  # the web flasher page, published by CI with each release
 │   └── images/                     # the pictures in this README
-├── tests/host/                     # host tests for protocol, tilt, orientation and the usage line: any C++17 compiler, run.sh / run.ps1
+├── tests/host/                     # host tests for protocol, tilt, orientation, the usage line, the sounds and the screen diff: any C++17 compiler, run.sh / run.ps1
 ├── .github/workflows/build.yml     # CI: host tests, both firmwares, release assets, web flasher
 ├── claude-monitor.code-workspace   # VS Code multi-root: repo + firmware projects
 ├── claude-code-status-monitor-atoms3r.md   # the original article: design decisions, icon geometry
@@ -530,11 +530,11 @@ claude-monitor/
 
 `firmware/*/.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port. Build output (`build/`, `managed_components/`, `sdkconfig`) is ignored too; `sdkconfig.defaults` is enough to recreate it.
 
-Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size. The other themes' icons are built the same way, with their words drawn in anti-aliased fonts on top; they stay upright, since the Tab5 turns its whole display instead.
+Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. The Tab5's names, clocks and tile frames are drawn into a canvas as large as the display, and only the pixels that differ from what the panel already shows are sent, so a clock's tick changes its digits and nothing else. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size. The other themes' icons are built the same way, with their words drawn in anti-aliased fonts on top; they stay upright, since the Tab5 turns its whole display instead.
 
 ## Tests and CI
 
-The board-independent code with no display dependency (`protocol.cpp`, `tilt.cpp`, `orientation.cpp`, `usage.cpp`) has host tests in `tests/host/`: plain C++17, no framework. `tests/host/run.sh` builds and runs them on Linux/macOS with any `g++` or `clang++`; `tests/host/run.ps1` does it on Windows with MSVC (found through `vswhere`) or a C++17 `g++`. They cover the line parser, every protocol word, the `calibrate` syntax, the tilt filter, the orientation steps, the `usage` line, the pace projection and the clock texts of the usage page. The icons and the state machine need an `M5Canvas`, so they are checked on the hardware.
+The board-independent code with no display dependency (`protocol.cpp`, `tilt.cpp`, `orientation.cpp`, `usage.cpp`, `sounds.cpp`, `screendiff.cpp`) has host tests in `tests/host/`: plain C++17, no framework. `tests/host/run.sh` builds and runs them on Linux/macOS with any `g++` or `clang++`; `tests/host/run.ps1` does it on Windows with MSVC (found through `vswhere`) or a C++17 `g++`. They cover the line parser, every protocol word, the `calibrate` syntax, the tilt filter, the orientation steps, the `usage` line, the pace projection and the clock texts of the usage page, the themes' synthesised alerts and the WAV reader for recordings, and the comparison that decides which pixels of the Tab5's texts go to the panel. The icons and the state machine need an `M5Canvas`, so they are checked on the hardware.
 
 GitHub Actions (`.github/workflows/build.yml`) runs the host tests and builds both firmwares (AtomS3R on `esp32s3`, Tab5 on `esp32p4`) with ESP-IDF 5.5 on every push and pull request, keeping each board's four images as a workflow artifact (`tools/collect-images.sh` names and merges them from the build's own flash arguments). On a version tag it also attaches them to the GitHub release for that tag and publishes the web flasher page with the AtomS3R's three parts and their ESP Web Tools manifest. The workflow can also be run by hand with a release tag to republish the flasher page from that release's assets.
 
