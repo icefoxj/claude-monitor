@@ -183,6 +183,31 @@ std::vector<int16_t> galacticFailure(uint32_t rate){
     return s.finish();
 }
 
+// ---- mech ----
+
+// A machine calling its operator: a servo chirp, then three pairs of
+// high-low alarm beeps
+std::vector<int16_t> mechAttention(uint32_t rate){
+    Synth s(rate);
+    s.note(0.0f, 0.07f, 0.7f, 0.004f, 0.02f, glide(600.0f, 1800.0f, 0.8f), sine);
+    for (int i = 0; i < 3; ++i){
+        const float t = 0.14f + 0.34f * static_cast<float>(i);
+        s.note(t, 0.12f, 1.0f, 0.004f, 0.02f, steady(1320.0f), softSquare);
+        s.note(t + 0.15f, 0.12f, 1.0f, 0.004f, 0.02f, steady(990.0f), softSquare);
+    }
+    return s.finish();
+}
+
+// The house firmware's fault horn (EG-01: 880 Hz for 600 ms) with a buzz
+// a fifth under it, then its refusal blip (440 Hz)
+std::vector<int16_t> mechFailure(uint32_t rate){
+    Synth s(rate);
+    s.note(0.0f, 0.6f, 1.0f, 0.006f, 0.05f, steady(880.0f), buzz);
+    s.note(0.0f, 0.6f, 0.35f, 0.006f, 0.05f, steady(587.0f), softSquare);
+    s.note(0.7f, 0.15f, 0.8f, 0.004f, 0.03f, steady(440.0f), softSquare);
+    return s.finish();
+}
+
 }  // namespace
 
 std::vector<int16_t> renderAlert(Theme theme, Alert alert, uint32_t sampleRate){
@@ -192,6 +217,7 @@ std::vector<int16_t> renderAlert(Theme theme, Alert alert, uint32_t sampleRate){
         case Theme::Anime:    return failure ? animeFailure(sampleRate) : animeAttention(sampleRate);
         case Theme::Lcars:    return failure ? lcarsFailure(sampleRate) : lcarsAttention(sampleRate);
         case Theme::Galactic: return failure ? galacticFailure(sampleRate) : galacticAttention(sampleRate);
+        case Theme::Mech:     return failure ? mechFailure(sampleRate) : mechAttention(sampleRate);
         case Theme::Classic:  break;
     }
     return {};

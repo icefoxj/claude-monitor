@@ -7,6 +7,7 @@
 #include "monitor/anime.h"
 #include "monitor/galactic.h"
 #include "monitor/lcars.h"
+#include "monitor/mech.h"
 #include "monitor/theme.h"
 
 namespace monitor {
@@ -91,7 +92,8 @@ void EventView::draw(const EventLog& log, const char* statusLine, int64_t nowMs)
     if (activeTheme() != Theme::Classic){
         if (animeTheme()) anime::inspector(canvas_, log, statusLine, nowMs);
         else if (lcarsTheme()) lcars::inspector(canvas_, log, statusLine, nowMs);
-        else galactic::inspector(canvas_, log, statusLine, nowMs);
+        else if (galacticTheme()) galactic::inspector(canvas_, log, statusLine, nowMs);
+        else mech::inspector(canvas_, log, statusLine, nowMs);
         canvas_.pushSprite(pushX_, pushY_);
         return;
     }

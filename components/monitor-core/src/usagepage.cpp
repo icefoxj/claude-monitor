@@ -9,6 +9,7 @@
 #include "monitor/anime.h"
 #include "monitor/galactic.h"
 #include "monitor/lcars.h"
+#include "monitor/mech.h"
 #include "monitor/theme.h"
 #include "monitor/usageview.h"
 
@@ -74,7 +75,8 @@ void UsagePage::draw(const Usage& usage, int32_t elapsedSec){
     if (activeTheme() != Theme::Classic){
         if (animeTheme()) anime::usagePage(c_, usage, elapsedSec);
         else if (lcarsTheme()) lcars::usagePage(c_, usage, elapsedSec);
-        else galactic::usagePage(c_, usage, elapsedSec);
+        else if (galacticTheme()) galactic::usagePage(c_, usage, elapsedSec);
+        else mech::usagePage(c_, usage, elapsedSec);
         push();
         return;
     }
@@ -226,7 +228,8 @@ namespace {
 
 // One theme's stripe in the switch, at `percent` of its brightness: the
 // classic's grey with a green dot, the anime's orange with a hexagon, the
-// LCARS lilac with a peach bar and a black cut, the galactic yellow reticle
+// LCARS lilac with a peach bar and a black cut, the galactic yellow reticle,
+// the mech graphite with an orange lamp over hazard stripes
 void themeEmblem(LovyanGFX& g, Theme t, int x, int y, int w, int h, int percent){
     auto c = [&](uint16_t color){ return glyphs::shade(color, percent); };
     const float cx = x + w * 0.5f, cy = y + h * 0.5f;
@@ -250,6 +253,11 @@ void themeEmblem(LovyanGFX& g, Theme t, int x, int y, int w, int h, int percent)
             galactic::circle(g, static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r * 1.2f), 2, c(galactic::kYellow));
             g.drawFastHLine(x + 1, static_cast<int>(cy), w - 2, c(galactic::kGreen));
             g.drawFastVLine(static_cast<int>(cx), y + h / 4, h / 2, c(galactic::kGreen));
+            break;
+        case Theme::Mech:
+            g.fillRect(x, y, w, h, c(mech::kPanel));
+            mech::hazard(g, x, y + h * 2 / 3, w, h - h * 2 / 3, c(mech::kOrange), 8);
+            mech::diamond(g, static_cast<int>(cx), y + h / 3, static_cast<int>(r * 0.8f), c(mech::kOrange));
             break;
     }
 }
@@ -280,6 +288,8 @@ void drawThemeSwitch(LovyanGFX& g, const UsageSwitch& s){
         g.drawRoundRect(x - 4, y - 4, n + 8, n + 8, 13, lcars::kOrange);
     } else if (galacticTheme()){
         galactic::brackets(g, x - 6, y - 6, n + 12, n + 12, 14, 2, galactic::kYellow);
+    } else if (mechTheme()){
+        mech::edge(g, x - 6, y - 6, n + 12, n + 12, 12, mech::kOrange, mech::kTLBR, 2);
     } else {
         g.drawRoundRect(x - 5, y - 5, n + 10, n + 10, 12, kDim);
         g.drawRoundRect(x - 4, y - 4, n + 8, n + 8, 11, kDim);

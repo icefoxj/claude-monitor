@@ -26,6 +26,7 @@ idf_component_register(
          "src/theme.cpp" "src/glyphs.cpp" "src/anime.cpp" "src/anime_icons.cpp" "src/anime_views.cpp"
          "src/lcars.cpp" "src/lcars_icons.cpp" "src/lcars_views.cpp"
          "src/galactic.cpp" "src/galactic_icons.cpp" "src/galactic_views.cpp"
+         "src/mechfont.cpp" "src/mech.cpp" "src/mech_icons.cpp" "src/mech_views.cpp"
     INCLUDE_DIRS "include"
     REQUIRES m5stack__m5unified
     PRIV_REQUIRES esp_app_format esp_hw_support esp_timer esp_system spi_flash nvs_flash

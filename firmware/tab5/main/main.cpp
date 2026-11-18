@@ -65,6 +65,7 @@
 #include "monitor/galactic.h"
 #include "monitor/icons.h"
 #include "monitor/lcars.h"
+#include "monitor/mech.h"
 #include "monitor/orientation.h"
 #include "monitor/protocol.h"
 #include "monitor/screendiff.h"
@@ -91,7 +92,7 @@ constexpr float kPi = 3.14159265f;
 constexpr int   kMaxSessions = 6;
 constexpr int   kTileGap     = 16;     // px between an icon and the tile's side
 constexpr float kIconScale   = 0.80f;  // the icon takes this much of the room the texts leave
-constexpr float kAnimeIconScale = 0.96f;   // in the anime and LCARS themes, whose rows already keep it apart
+constexpr float kAnimeIconScale = 0.96f;   // in the other themes, whose rows already keep it apart
 constexpr int   kViewW       = 720;    // the inspector canvas on the detail page
 constexpr int   kViewH       = 720;
 
@@ -146,8 +147,9 @@ struct Rect { int x = 0, y = 0, w = 0, h = 0; bool contains(int px, int py) cons
 
 // Where a tile's icon and its two text rows go. Classic: name band, icon
 // and clock band as one group centred in the tile. Anime: the rows at the
-// top and the bottom of the tile, the icon centred between (galactic too).
-// LCARS: the same rows, and the icon right of the side bar that joins them
+// top and the bottom of the tile, the icon centred between (galactic and
+// mech too). LCARS: the same rows, and the icon right of the side bar that
+// joins them
 struct Placement {
     int iconSize, ix, iy, nameY, clockY;
     int roomX, roomY, roomW, roomH;   // the box the icon sits in, for the usage tile's bars
@@ -158,9 +160,13 @@ Placement placeIn(const Rect& t, int band){
     if (monitor::activeTheme() != monitor::Theme::Classic){
         const bool lcars = monitor::lcarsTheme();
         const bool galactic = monitor::galacticTheme();
-        const int rowTop = lcars ? monitor::lcars::kRowInset : (galactic ? monitor::galactic::kRowInset : monitor::anime::kRowInset);
-        const int gap    = lcars ? monitor::lcars::kRowGap : (galactic ? monitor::galactic::kRowGap : monitor::anime::kRowGap);
-        const int pad    = lcars ? monitor::lcars::kTilePad : (galactic ? monitor::galactic::kTilePad : monitor::anime::kTilePad);
+        const bool mech = monitor::mechTheme();
+        const int rowTop = lcars ? monitor::lcars::kRowInset : galactic ? monitor::galactic::kRowInset
+                         : mech ? monitor::mech::kRowInset : monitor::anime::kRowInset;
+        const int gap    = lcars ? monitor::lcars::kRowGap : galactic ? monitor::galactic::kRowGap
+                         : mech ? monitor::mech::kRowGap : monitor::anime::kRowGap;
+        const int pad    = lcars ? monitor::lcars::kTilePad : galactic ? monitor::galactic::kTilePad
+                         : mech ? monitor::mech::kTilePad : monitor::anime::kTilePad;
         p.nameY  = t.y + rowTop + band / 2;
         p.clockY = t.y + t.h - rowTop - band / 2;
         const int top    = t.y + rowTop + band + gap;
@@ -533,11 +539,12 @@ extern "C" void app_main(void){
         const int W = M5.Display.width();
         const int H = M5.Display.height();
         const bool landscape = W > H;
-        M5.Display.fillScreen(TFT_BLACK);
+        M5.Display.fillScreen(monitor::themeBackground());
         for (auto& s : slots) s.ui.setVisible(false);
         placeholder.ui.setVisible(false);
 
-        // The panel is black now, and so is the frame drawTexts compares with
+        // The panel is the theme's ground now (black, graphite for mech), and
+        // so is the frame drawTexts compares with
         for (M5Canvas* c : { textCur, textPrev }){
             if (c->width() != W || c->height() != H){
                 c->deleteSprite();
@@ -548,7 +555,7 @@ extern "C" void app_main(void){
                 }
             }
         }
-        textPrev->fillScreen(TFT_BLACK);
+        textPrev->fillScreen(monitor::themeBackground());
         textRegions.clear();
 
         if (view == View::Detail && detail && detail->used){
@@ -621,10 +628,11 @@ extern "C" void app_main(void){
         textDirty = true;
     };
 
-    // The anime, LCARS or galactic rows around a session's icon (a tile, or
-    // the detail page's icon column): number, name and state, the clock; a
-    // red state blinks (the anime's number tag, the LCARS elbows, the
-    // galactic brackets) with the once-a-second redraw
+    // The anime, LCARS, galactic or mech rows around a session's icon (a
+    // tile, or the detail page's icon column): number, name and state, the
+    // clock; a red state blinks (the anime's number tag, the LCARS elbows,
+    // the galactic brackets, the mech panel's outline and hazard stripes)
+    // with the once-a-second redraw
     auto themedTile = [&](LovyanGFX& g, const Rect& r, int nameY, int clockY, int number, Slot* s) {
         const monitor::State st = s->ui.state();
         const bool alert = st == monitor::State::WaitingUser || st == monitor::State::Error;
@@ -660,6 +668,22 @@ extern "C" void app_main(void){
             monitor::galactic::drawTile(g, t);
             return;
         }
+        if (monitor::mechTheme()){
+            const monitor::mech::Look lk = monitor::mech::look(st);
+            monitor::mech::Tile t;
+            t.x = r.x; t.y = r.y; t.w = r.w; t.h = r.h;
+            t.headY = nameY; t.footY = clockY; t.band = style.band;
+            t.index = index;
+            t.name  = s->label.c_str();
+            t.label = lk.label;
+            t.color = lk.color;
+            t.frame = alert ? (blinkOff ? monitor::mech::mix(lk.color, monitor::mech::kPanel, 0.6f) : lk.color)
+                            : monitor::mech::kLine;
+            t.alarm = alert;
+            t.clock = clock;
+            monitor::mech::drawTile(g, t);
+            return;
+        }
         const monitor::anime::Look lk = monitor::anime::look(st);
         monitor::anime::Tile t;
         t.x = r.x; t.y = r.y; t.w = r.w; t.h = r.h;
@@ -675,10 +699,13 @@ extern "C" void app_main(void){
     };
 
     // The usage tile: the bars, then its name and the age of the numbers
+    // (mech: the panel first, the bars on it)
     auto drawUsageTile = [&](M5Canvas& g) {
         if (!usageShown) return;
         const int32_t elapsed = static_cast<int32_t>((nowMs() - usageMs) / 1000);
-        monitor::drawUsageRows(g, usageBox.x, usageBox.y, usageBox.w, usageBox.h, usage, elapsed, TFT_BLACK);
+        if (!monitor::mechTheme()){
+            monitor::drawUsageRows(g, usageBox.x, usageBox.y, usageBox.w, usageBox.h, usage, elapsed, monitor::themeBackground());
+        }
         if (monitor::animeTheme()){
             char age[40];
             monitor::usageAgeText(usage.ageSec + elapsed, age, sizeof(age));
@@ -722,6 +749,20 @@ extern "C" void app_main(void){
             t.frame = monitor::galactic::kYellow;
             t.note  = note.c_str();
             monitor::galactic::drawTile(g, t);
+            return;
+        }
+        if (monitor::mechTheme()){
+            char age[40];
+            monitor::usageAgeText(usage.ageSec + elapsed, age, sizeof(age));
+            monitor::mech::Tile t;
+            t.x = usageTile.x; t.y = usageTile.y; t.w = usageTile.w; t.h = usageTile.h;
+            t.headY = usageNameY; t.footY = usageAgeY; t.band = style.band;
+            t.name  = "Claude usage";
+            t.label = "LIMITS";
+            t.color = monitor::mech::kOrange;
+            t.note  = age;
+            monitor::mech::drawTile(g, t);
+            monitor::drawUsageRows(g, usageBox.x, usageBox.y, usageBox.w, usageBox.h, usage, elapsed, monitor::mech::kPanel);
             return;
         }
         const int32_t age = usage.ageSec + elapsed;
@@ -773,7 +814,7 @@ extern "C" void app_main(void){
     auto drawTexts = [&]() {
         if (view == View::Usage) return;   // the page has its own
         if (textRegions.empty() || !textCur->getBuffer() || !textPrev->getBuffer()) return;
-        for (const Rect& r : textRegions) textCur->fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
+        for (const Rect& r : textRegions) textCur->fillRect(r.x, r.y, r.w, r.h, monitor::themeBackground());
         composeTexts(*textCur);
         const int W = textCur->width(), H = textCur->height();
         const auto* cur  = static_cast<const uint16_t*>(textCur->getBuffer());
@@ -1057,10 +1098,10 @@ extern "C" void app_main(void){
                     monitor::dumpDisplay(M5.Display, writeAll);
                     break;
                 case monitor::Command::Theme: {
-                    // "theme classic" / "theme anime"
+                    // "theme classic", "theme anime", ..., "theme mech"
                     monitor::Theme t;
                     if (!monitor::parseTheme(cmd.arg, t) || !monitor::themeAvailable(t)){
-                        static const char kUsage[] = "ERROR theme: expected classic or anime\n";
+                        static const char kUsage[] = "ERROR theme: expected classic, anime, lcars, galactic or mech\n";
                         writeLine(kUsage, sizeof(kUsage) - 1);
                         break;
                     }
@@ -1120,7 +1161,7 @@ extern "C" void app_main(void){
             } else if (view == View::Usage && usagePage.themeSwitch().contains(t.x, t.y)
                        && monitor::nextAvailableTheme(monitor::activeTheme()) != monitor::activeTheme()){
                 // The switch in the usage page's corner: the next look (classic,
-                // anime, LCARS, galactic, classic...), same page
+                // anime, LCARS, galactic, mech, classic...), same page
                 switchTheme(monitor::nextAvailableTheme(monitor::activeTheme()));
             } else if (view != View::Grid){
                 view = View::Grid;

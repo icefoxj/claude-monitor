@@ -27,4 +27,15 @@ menu "claude-monitor"
             (the Tab5); the drawing code is always built, only the fonts
             depend on this.
 
+    config MONITOR_MECH_THEME
+        bool "Mech theme (the house look of the other projects' apps and HUDs)"
+        default n
+        help
+            Lets "theme mech" switch the views to the house mech look:
+            graphite panels with 45-degree cuts, an orange livery, hazard
+            stripes and a chamfered stroke font. Its text is drawn as
+            strokes, so this embeds nothing; hook data uses the anime
+            theme's monospace font when that theme is on, DejaVu otherwise.
+            Meant for large panels (the Tab5).
+
 endmenu

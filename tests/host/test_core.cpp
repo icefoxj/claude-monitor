@@ -155,9 +155,16 @@ void testParseCommand(){
         CHECK(nextTheme(Theme::Classic) == Theme::Anime);
         CHECK(nextTheme(Theme::Anime) == Theme::Lcars);
         CHECK(nextTheme(Theme::Lcars) == Theme::Galactic);
-        CHECK(nextTheme(Theme::Galactic) == Theme::Classic);
+        CHECK(nextTheme(Theme::Galactic) == Theme::Mech);
+        CHECK(nextTheme(Theme::Mech) == Theme::Classic);
         CHECK(parseTheme("galactic", t) && t == Theme::Galactic);
         CHECK(std::string(themeName(Theme::Galactic)) == "galactic");
+        CHECK(parseTheme("mech", t) && t == Theme::Mech);
+        CHECK(std::string(themeName(Theme::Mech)) == "mech");
+        CHECK(!parseTheme("MECH", t) && t == Theme::Mech);
+        // the board stores the enum's value: new themes go at the end
+        CHECK(static_cast<int>(Theme::Galactic) == 3 && static_cast<int>(Theme::Mech) == 4);
+        CHECK(kThemeCount == 5);
     }
     CHECK(kProtocolVersion == 9);
 
@@ -515,7 +522,7 @@ void testSounds(){
     CHECK(alertFor(State::Error) == Alert::Failure);
     CHECK(alertFor(State::WaitingUser) == Alert::Attention);
 
-    const Theme themes[] = {Theme::Anime, Theme::Lcars, Theme::Galactic};
+    const Theme themes[] = {Theme::Anime, Theme::Lcars, Theme::Galactic, Theme::Mech};
     const Alert alerts[] = {Alert::Attention, Alert::Failure};
     for (Theme t : themes){
         for (Alert a : alerts){
@@ -534,6 +541,9 @@ void testSounds(){
     // the red alert is the longest: three whoops, about two seconds
     const size_t klaxon = renderAlert(Theme::Lcars, Alert::Attention, 32000).size();
     CHECK(klaxon > 32000 * 19 / 10 && klaxon < 32000 * 21 / 10);
+    // the mech fault horn is EG-01's 600 ms tone, then the refusal blip: 0.85 s
+    const size_t horn = renderAlert(Theme::Mech, Alert::Failure, 32000).size();
+    CHECK(horn > 32000 * 84 / 100 && horn < 32000 * 86 / 100);
 }
 
 // A WAV file in memory: `extra` adds an odd-sized chunk before the data

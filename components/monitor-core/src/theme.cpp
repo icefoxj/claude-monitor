@@ -3,6 +3,8 @@
 #include <nvs.h>
 #include <sdkconfig.h>
 
+#include "monitor/mech.h"
+
 namespace monitor {
 
 namespace {
@@ -26,8 +28,15 @@ bool themeAvailable(Theme t){
 #if defined(CONFIG_MONITOR_GALACTIC_THEME)
         case Theme::Galactic: return true;
 #endif
+#if defined(CONFIG_MONITOR_MECH_THEME)
+        case Theme::Mech: return true;
+#endif
         default: return false;
     }
+}
+
+uint16_t themeBackground(){
+    return active == Theme::Mech ? mech::kBg : 0;
 }
 
 bool setActiveTheme(Theme t){

@@ -120,9 +120,21 @@ A permission sounds the targeting computer locking on, beeps closing in faster a
 
 The font is Oxanium, under the SIL Open Font License (`components/monitor-core/fonts/OFL-Oxanium.txt`), cut down the same way (about 360 KB).
 
+## The Tab5 mech theme
+
+![the dashboard in the mech theme, with made-up sessions](docs/images/mech-dashboard.png)
+
+A fifth look, the house style of the author's other hardware projects: the Windows "Studio" apps that drive them, the HUDs on their M5Stack screens and the liveries on their printed parts. Graphite panels with 45° cuts and an orange tab on the cut corner, a title band with the unit code (CM-01) knocked out of orange, hazard stripes, slanted speed dashes, corner brackets, diamond lamps, and the chamfered stroke font in capitals; orange is the livery, cyan, green, amber and red are states. Each tile is a panel: the project and a chip with the state (RUN, APPROVE, QUERY, FAULT, HOLD, READY, COMPACT) in the header, the tile's number on a small title band and the clock in the footer; a red tile's outline blinks and hazard stripes run through its header. The icons are a round HUD inside orange brackets: work in progress is a reticle with a comet of lit segments running round the ring, chevrons lit in turn beside it (two cyan drones while subagents are out, chevrons pointing inwards while compacting) and a thin track outside the ring that fills with the work time; the states that want you light the whole ring around a big "!", "?" or "X" (a check when the turn is over), flashing as they come up; HOLD drains the ring around a pause sign while a usage limit holds you. The detail page, the usage page and the screensaver follow, laid out like the apps: title band, panels with tabs, segmented gauges.
+
+<p><img src="docs/images/mech-usage.png" width="49%" alt="the usage page in the mech theme"> <img src="docs/images/mech-detail.png" width="49%" alt="the detail page in the mech theme"></p>
+
+A permission sounds a machine calling its operator, a servo chirp and three two-tone alarm beeps; an error is the house firmware's fault horn and its refusal blip ([sounds](#theme-sounds)).
+
+There is no font to embed: the stroke font is a few polylines per letter, the same glyphs as the other projects' firmware, apps and CAD (`components/monitor-core/src/mechfont.cpp`). Hook data on the detail page uses the anime theme's Noto Sans Mono.
+
 ## Switching themes
 
-The icon in the top-right corner of the usage page has a stripe per theme, the one in use lit; each tap moves to the next: classic, anime, LCARS, galactic, classic again. The serial port takes `theme classic`, `theme anime`, `theme lcars` or `theme galactic`, and the daemon passes it on:
+The icon in the top-right corner of the usage page has a stripe per theme, the one in use lit; each tap moves to the next: classic, anime, LCARS, galactic, mech, classic again. The serial port takes `theme classic`, `theme anime`, `theme lcars`, `theme galactic` or `theme mech`, and the daemon passes it on:
 
 ```powershell
 Invoke-RestMethod -Method Post 'http://localhost:47831/theme?name=lcars'
@@ -140,6 +152,7 @@ The Tab5 sounds an alert when a tile turns red, and when you switch themes it pl
 | anime | three bursts of three sharp high beeps, like a HUD warning | two buzzing wails falling |
 | LCARS | a red-alert klaxon, three rising whoops | the computer's falling three-note "unable to comply" |
 | galactic | a targeting computer locking on: beeps closing in faster and higher, then a held tone | a system powering down with a stutter, two blips |
+| mech | a machine calling its operator: a servo chirp, then three two-tone alarm beeps | the house firmware's fault horn (880 Hz, buzzing) and its 440 Hz refusal blip |
 
 Out of the box these are **synthesised** on the board (the classic notes as plain tones, the others in `components/monitor-core/src/sounds.cpp`): a few notes and sweeps in the manner of each look, rendered into PSRAM the first time they play. They are not the sounds of the films and shows that inspired the themes. Those recordings belong to their studios, so they are not in this repository and never will be, and the prebuilt images in the releases carry only the synthesised sounds.
 
@@ -162,6 +175,7 @@ If you have your own copy of a sound you would rather hear (the show's red alert
    | `anime-attention.wav` / `anime-failure.wav` | the anime theme's |
    | `lcars-attention.wav` / `lcars-failure.wav` | the LCARS theme's |
    | `galactic-attention.wav` / `galactic-failure.wav` | the galactic theme's |
+   | `mech-attention.wav` / `mech-failure.wav` | the mech theme's |
 
    Any sound without a file stays synthesised, so you can replace one and keep the rest.
 4. **Build and flash** the Tab5 as in [Build and flash](#build-and-flash) (`idf.py -p COMx flash` in `firmware/tab5`). The build notices files added to or removed from the folder by itself.
@@ -193,7 +207,7 @@ The Anthropic API does not expose session state, so the device cannot poll. Inst
 
 The daemon keeps one state per session and sends the cube the most urgent one (error > `!` = `?` > hourglass > compacting > processing > idle), the Tab5 one line per session, and both a heartbeat every 30 s. It also watches the process tree: Claude Code has no hook for the moment you approve a permission, but the approved tool's process appears under the session's `claude.exe` within half a second, and that is when the red sign goes back to the gear (and the EXT badge comes on).
 
-The protocol is one command per line, `\n`-terminated, no JSON, no handshake. State words: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Counters and flags: `subagent_start` / `subagent_stop`, `tool_start` / `tool_stop`. `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Queries: `status` answers with one `STATUS` line (state, calibration in effect, session codes, link, work seconds, screen) and `version` with one `VERSION` line (board, model detected, chip, flash, firmware, ESP-IDF and M5Unified versions, protocol version, `features=`, build time, uptime, reset reason); the Tab5 also answers `screenshot` with its display as text (what made the pictures above), and `view grid` / `view detail <id>` does what a tap does. Two kinds of line exist only for boards that ask for them in `features=`: `event <name>` with tab-separated `key=value` pairs carries a whole hook event (`events`), and `session <id>` with `label=`, `state=`, `subagents=`, `tool=`, `project=` describes one live session (`sessions`), with `session_end <id>` and `session_clear`. A third, `usage <source>` with one `limit=<label>|<percent>|<seconds to reset>|<severity>` per limit, feeds the Tab5's usage tile and screensaver, with `split=<app>:<percent>|...` for the week by app (`usage`, protocol 7); protocol 8 adds the usage page's fields to the same line (`now=` the host's clock and UTC offset, `windows=` each limit's length, `plan=`, `extra=`, `history=` the week hour by hour, one `project=<name>|<week %>|<today %>` per project), which older boards skip, and `view usage`. Protocol 9 adds `theme <classic|anime|lcars|galactic>` for a board that lists `theme` (the Tab5; the cube answers `ERROR`). The AtomS3R never receives the `event`, `session` and `usage` lines.
+The protocol is one command per line, `\n`-terminated, no JSON, no handshake. State words: `processing`, `waiting_user`, `question`, `error`, `paused`, `compacting`, `idle`, `off`. Counters and flags: `subagent_start` / `subagent_stop`, `tool_start` / `tool_stop`. `sessions <codes>` lists the live sessions, one letter each (`p` processing, `w` waiting, `q` question, `e` error, `h` paused, `c` compacting, `i` idle), for the session dots. `ping` is the heartbeat. `calibrate rot=… sign=… offset=…` (or `calibrate reset`) stores the orientation calibration on the device. Queries: `status` answers with one `STATUS` line (state, calibration in effect, session codes, link, work seconds, screen) and `version` with one `VERSION` line (board, model detected, chip, flash, firmware, ESP-IDF and M5Unified versions, protocol version, `features=`, build time, uptime, reset reason); the Tab5 also answers `screenshot` with its display as text (what made the pictures above), and `view grid` / `view detail <id>` does what a tap does. Two kinds of line exist only for boards that ask for them in `features=`: `event <name>` with tab-separated `key=value` pairs carries a whole hook event (`events`), and `session <id>` with `label=`, `state=`, `subagents=`, `tool=`, `project=` describes one live session (`sessions`), with `session_end <id>` and `session_clear`. A third, `usage <source>` with one `limit=<label>|<percent>|<seconds to reset>|<severity>` per limit, feeds the Tab5's usage tile and screensaver, with `split=<app>:<percent>|...` for the week by app (`usage`, protocol 7); protocol 8 adds the usage page's fields to the same line (`now=` the host's clock and UTC offset, `windows=` each limit's length, `plan=`, `extra=`, `history=` the week hour by hour, one `project=<name>|<week %>|<today %>` per project), which older boards skip, and `view usage`. Protocol 9 adds `theme <classic|anime|lcars|galactic|mech>` for a board that lists `theme` (the Tab5; the cube answers `ERROR`). The AtomS3R never receives the `event`, `session` and `usage` lines.
 
 The daemon is optional: the hooks can also run a one-line script per event that writes to the port directly (see [Without the daemon](#without-the-daemon)). The daemon is better in every way that matters: no process start-up per event, a single writer on the port, events in order, a log with timestamps, per-session tracking, approval detection.
 
@@ -380,7 +394,7 @@ Endpoints, all on `http://localhost:47831/`:
 | `GET /serial/status` | asks the device for its `STATUS` line and returns it |
 | `POST /state/<state>` | writes one state to the device (what `Send-ClaudeState.ps1` uses) |
 | `POST /calibrate?rot=1&sign=-1&offset=0` | stores the orientation calibration on the device (any subset) and returns its `STATUS`; `?reset=1` restores the compiled defaults |
-| `POST /theme?name=anime` | switches the Tab5 to the [anime](#the-tab5-anime-theme), [LCARS](#the-tab5-lcars-theme) or [galactic](#the-tab5-galactic-theme) theme (`name=lcars`, `name=galactic`, `name=classic` back) and returns its `STATUS`; the board stores it |
+| `POST /theme?name=anime` | switches the Tab5 to the [anime](#the-tab5-anime-theme), [LCARS](#the-tab5-lcars-theme), [galactic](#the-tab5-galactic-theme) or [mech](#the-tab5-mech-theme) theme (`name=lcars`, `name=galactic`, `name=mech`, `name=classic` back) and returns its `STATUS`; the board stores it |
 | `POST /release[?seconds=120]` | closes the port so `idf.py` or the web flasher can write; reopens after the delay |
 | `POST /reconnect` | reopens the port now |
 | `GET /health` | `{"ok":true}` |
@@ -489,11 +503,11 @@ Everything that does not depend on the hardware is an ESP-IDF component; each bo
 
 ```
 claude-monitor/
-├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page, the four themes, their sounds
+├── components/monitor-core/        # board-independent: protocol, icons, state machine, tilt, orientation, inspector, screenshot, usage screensaver and page, the five themes, their sounds
 │   ├── include/monitor/*.h
 │   ├── src/*.cpp
 │   ├── fonts/                      # the themes' fonts (VLW, from tools/make-fonts.py) and their licenses
-│   ├── Kconfig                     # CONFIG_MONITOR_{ANIME,LCARS,GALACTIC}_THEME: embed those fonts (the Tab5 does)
+│   ├── Kconfig                     # CONFIG_MONITOR_{ANIME,LCARS,GALACTIC}_THEME: embed those fonts; _MECH_THEME: no fonts, makes it selectable (the Tab5 has all four)
 │   └── idf_component.yml           # m5stack/m5unified ^0.2
 ├── firmware/atoms3r/               # ESP-IDF project for the AtomS3R (esp32s3)
 │   ├── sdkconfig.defaults          # target esp32s3, 8 MB flash
@@ -501,7 +515,7 @@ claude-monitor/
 │   ├── main/main.cpp               # board wiring: panel, IMU, button, USB Serial/JTAG, NVS calibration
 │   └── .vscode/                    # c_cpp_properties.json and launch.json (settings.json is not committed)
 ├── firmware/tab5/                  # ESP-IDF project for the Tab5 (esp32p4): tiles, detail page, touch, speaker
-│   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz, the three themes' fonts
+│   ├── sdkconfig.defaults          # target esp32p4, 16 MB flash, PSRAM 200 MHz, the four extra themes
 │   ├── partitions.csv              # a 4 MB app partition
 │   ├── main/main.cpp
 │   └── sounds/                     # your own WAVs to replace alert sounds, local builds only (gitignored)
@@ -530,7 +544,7 @@ claude-monitor/
 
 `firmware/*/.vscode/settings.json` is not committed: it holds machine-specific paths (ESP-IDF install, clangd, COM port) that the ESP-IDF extension writes when you pick the setup, target and port. Build output (`build/`, `managed_components/`, `sdkconfig`) is ignored too; `sdkconfig.defaults` is enough to recreate it.
 
-Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. The Tab5's names, clocks and tile frames are drawn into a canvas as large as the display, and only the pixels that differ from what the panel already shows are sent, so a clock's tick changes its digits and nothing else. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size. The other themes' icons are built the same way, with their words drawn in anti-aliased fonts on top; they stay upright, since the Tab5 turns its whole display instead.
+Everything is drawn into an in-RAM canvas and pushed to the panel in one go, so the animations run without flicker. The Tab5's names, clocks and tile frames are drawn into a canvas as large as the display, and only the pixels that differ from what the panel already shows are sent, so a clock's tick changes its digits and nothing else. Icons are procedural — triangles, circles and round-capped strokes, no bitmaps — defined once for a 128 px canvas and scaled by the canvas size, and rotated vertex by vertex, which is why they can sit at any angle and any size. The other themes' icons are built the same way, with their words drawn in anti-aliased fonts on top (the mech theme's in its stroke font, itself a set of polylines); they stay upright, since the Tab5 turns its whole display instead.
 
 ## Tests and CI
 

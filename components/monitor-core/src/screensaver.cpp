@@ -6,6 +6,7 @@
 #include "monitor/anime.h"
 #include "monitor/galactic.h"
 #include "monitor/lcars.h"
+#include "monitor/mech.h"
 #include "monitor/theme.h"
 #include "monitor/usageview.h"
 
@@ -151,6 +152,11 @@ void UsageSaver::render(int64_t nowMs){
     if (galacticTheme()){
         galactic::saverCard(card_, kEdge, kEdge, kWidth, cardHeight(rows_), kPad, kHeader,
                             usage_, elapsed, have_ && !usage_.limits.empty());
+        return;
+    }
+    if (mechTheme()){
+        mech::saverCard(card_, kEdge, kEdge, kWidth, cardHeight(rows_), kPad, kHeader,
+                        usage_, elapsed, have_ && !usage_.limits.empty());
         return;
     }
     card_.fillScreen(TFT_BLACK);

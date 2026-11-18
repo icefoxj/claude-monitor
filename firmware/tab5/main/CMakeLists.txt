@@ -5,7 +5,7 @@
 set(sound_dir "${CMAKE_CURRENT_LIST_DIR}/../sounds")
 set(sound_files "")
 set(sound_names "")
-foreach(theme classic anime lcars galactic)
+foreach(theme classic anime lcars galactic mech)
     foreach(alert attention failure)
         if(EXISTS "${sound_dir}/${theme}-${alert}.wav")
             list(APPEND sound_files "${sound_dir}/${theme}-${alert}.wav")

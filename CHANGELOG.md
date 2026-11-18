@@ -2,6 +2,16 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
+## 1.6.0 — 2026-11-18
+
+### Added
+
+- **Mech theme on the Tab5**, the house look of the author's other projects (their Windows "Studio" apps, their M5Stack HUDs, their printed liveries): graphite panels with 45° cuts and an orange tab on the cut corner, a title band with the unit code CM-01 knocked out of orange, hazard stripes, speed dashes, corner brackets, diamond lamps and the chamfered stroke font in capitals. Each tile is a panel with the project and a chip with the state (RUN, APPROVE, QUERY, FAULT, HOLD, READY, COMPACT) in the header and the tile's number and the clock in the footer; a red tile's outline blinks and hazard stripes run through its header. The icons are a round HUD in orange brackets: a reticle with a comet of lit segments running round the ring while Claude works (cyan drones with subagents, inward chevrons while compacting, the work time on a thin outer track), the whole ring lit around a big "!", "?", "X" or a check for the states that want you, flashing as they come up, and the ring draining around a pause sign for HOLD. The detail page, the usage page and the screensaver follow, laid out like the apps. Its sounds: a servo chirp and three two-tone alarm beeps for a permission; the house firmware's fault horn (880 Hz) and refusal blip for an error. No font files: the stroke font is drawn as polylines (`monitor-core`'s `mechfont.cpp`, the same glyphs as the other projects plus `# ( ) [ ] , ' " ! ? $`), so `CONFIG_MONITOR_MECH_THEME` only makes the theme selectable. The switch goes classic, anime, LCARS, galactic, mech; `theme mech` from the host, `POST /theme?name=mech` through the daemon; `mech-attention.wav` / `mech-failure.wav` replace its sounds in a local build.
+
+### Changed
+
+- Tab5: the screen behind the tiles takes the theme's ground (`themeBackground()`: black, graphite for mech) instead of always black.
+
 ## 1.5.0 — 2026-11-09
 
 ### Added

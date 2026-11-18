@@ -128,6 +128,12 @@ Shot 'galactic-detail'    (@('theme galactic') + $events + 'view detail a1') 2 $
 Shot 'galactic-saver'     @('theme galactic', 'view grid', 'ping', $usage, 'view saver') 2 $null 0
 Shot 'galactic-usage'     @('theme galactic', 'view grid', 'ping', $page, 'view usage') 2 $null 0
 
+# ---- and in the mech theme ----
+Shot 'mech-dashboard' (@('theme mech', 'view grid', 'session_clear', 'ping') + $animeSessions) 4 $null 0
+Shot 'mech-detail'    (@('theme mech') + $events + 'view detail a1') 2 $null 0
+Shot 'mech-saver'     @('theme mech', 'view grid', 'ping', $usage, 'view saver') 2 $null 0
+Shot 'mech-usage'     @('theme mech', 'view grid', 'ping', $page, 'view usage') 2 $null 0
+
 # ---- leave the board as we found it (in the classic theme) ----
 $done = Join-Path $OutDir 'cleanup.png'
 & $shot -PortName $PortName -OutFile $done -Setup @('theme classic', 'view grid', 'usage none', 'session_clear', 'idle') | Out-Null

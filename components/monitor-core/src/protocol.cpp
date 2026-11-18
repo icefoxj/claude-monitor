@@ -63,6 +63,7 @@ const char* themeName(Theme t){
         case Theme::Anime: return "anime";
         case Theme::Lcars: return "lcars";
         case Theme::Galactic: return "galactic";
+        case Theme::Mech: return "mech";
         case Theme::Classic: break;
     }
     return "classic";

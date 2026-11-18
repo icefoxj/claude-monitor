@@ -19,6 +19,10 @@
 //   galactic  a targeting computer locking on: beeps closing in faster and
 //             higher, then a held tone; an error is a system powering down
 //             with a stutter, and two blips
+//   mech      a machine calling its operator: a servo chirp, then three
+//             two-tone alarm beeps; an error is the house firmware's fault
+//             horn (EG-01's 880 Hz for 600 ms, buzzing) and its 440 Hz
+//             refusal blip
 //
 // Small speakers lose everything under ~400 Hz, so no sound lives there.
 // A board may play a recording instead, from a WAV the user supplies for

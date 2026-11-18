@@ -7,6 +7,7 @@
 #include "monitor/anime.h"
 #include "monitor/galactic.h"
 #include "monitor/lcars.h"
+#include "monitor/mech.h"
 #include "monitor/theme.h"
 
 namespace monitor {
@@ -218,6 +219,7 @@ void drawUsageRows(M5Canvas& c, int x, int y, int w, int h,
     if (animeTheme()){ anime::usageRows(c, x, y, w, h, usage, elapsedSec, bg, detailed); return; }
     if (lcarsTheme()){ lcars::usageRows(c, x, y, w, h, usage, elapsedSec, detailed); return; }
     if (galacticTheme()){ galactic::usageRows(c, x, y, w, h, usage, elapsedSec, detailed); return; }
+    if (mechTheme()){ mech::usageRows(c, x, y, w, h, usage, elapsedSec, detailed); return; }
     const int rows = usageRowCount(usage);
     const int limitRows = static_cast<int>(usage.limits.size());
     if (rows == 0 || w <= 0 || h <= 0) return;

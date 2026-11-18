@@ -148,6 +148,17 @@ private:
     void galacticLinkLost();
     void galacticToolMark();
 
+    // The mech theme's icons (mech_icons.cpp), upright too; Off is a HUD
+    // with its lights out rather than a blank canvas
+    void mechCore(float spin, GearStyle style);
+    void mechPanel(Panel kind, float scale);
+    void mechStandby(const Hourglass& h);
+    void mechBlank();
+    void mechRing(float fraction, int lap);
+    void mechDots(std::string_view codes);
+    void mechLinkLost();
+    void mechToolMark();
+
     M5Canvas& canvas_;
     float unit_;        // canvas pixels per 128-space unit
     float cx_, cy_;     // canvas centre in pixels

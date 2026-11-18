@@ -199,6 +199,7 @@ void Icons::ring(float angle, float fraction, int lap){
     if (animeTheme()){ animeRing(fraction, lap); return; }
     if (lcarsTheme()){ lcarsRing(fraction, lap); return; }
     if (galacticTheme()){ galacticRing(fraction, lap); return; }
+    if (mechTheme()){ mechRing(fraction, lap); return; }
     static constexpr uint16_t kLapColor[] = { kColorYellow, kColorAmber, kColorRed };
     if (lap >= 3){
         thickArc(0, 0, kBandRadius, -90, 270, 3, kColorRed, angle, 1.0f);
@@ -216,6 +217,7 @@ void Icons::sessionDots(float angle, std::string_view codes){
     if (animeTheme()){ animeDots(codes); return; }
     if (lcarsTheme()){ lcarsDots(codes); return; }
     if (galacticTheme()){ galacticDots(codes); return; }
+    if (mechTheme()){ mechDots(codes); return; }
     int n = static_cast<int>(codes.size());
     if (n > 8) n = 8;
     const float step = 10.0f;   // degrees between dots along the band
@@ -242,6 +244,7 @@ void Icons::linkLost(float angle){
     if (animeTheme()){ animeLinkLost(); return; }
     if (lcarsTheme()){ lcarsLinkLost(); return; }
     if (galacticTheme()){ galacticLinkLost(); return; }
+    if (mechTheme()){ mechLinkLost(); return; }
     Pt p = rotated(0, -kBandRadius, angle);
     canvas_.fillCircle(px(p.x), px(p.y), px(5.0f * unit_), kColorGrey);
     canvas_.fillCircle(px(p.x), px(p.y), px(2.5f * unit_), kColorBg);
@@ -297,6 +300,7 @@ void Icons::toolMark(float angle){
     if (animeTheme()){ animeToolMark(); return; }
     if (lcarsTheme()){ lcarsToolMark(); return; }
     if (galacticTheme()){ galacticToolMark(); return; }
+    if (mechTheme()){ mechToolMark(); return; }
     prepareBadge();
     if (badgeSize_ == 0) return;   // no memory for the sprite: no badge
     Pt p = rotated(kBadgeOffset, kBadgeOffset, angle);
@@ -313,6 +317,7 @@ void Icons::gear(float spinAngle, GearStyle style){
     if (animeTheme()){ animeReticle(spinAngle, style); return; }
     if (lcarsTheme()){ lcarsCore(spinAngle, style); return; }
     if (galacticTheme()){ galacticTrench(spinAngle, style); return; }
+    if (mechTheme()){ mechCore(spinAngle, style); return; }
     canvas_.fillSprite(kColorBg);
     if (style == GearStyle::Subagents){
         // A smaller main gear and a satellite meshing up-right, turning the
@@ -334,6 +339,7 @@ void Icons::waiting(float angle, float scale){
     if (animeTheme()){ animePanel(Panel::Warning, scale); return; }
     if (lcarsTheme()){ lcarsPanel(Panel::Warning, scale); return; }
     if (galacticTheme()){ galacticPanel(Panel::Warning, scale); return; }
+    if (mechTheme()){ mechPanel(Panel::Warning, scale); return; }
     sign(kColorRed, angle, scale);
 
     // Exclamation mark: a pill-shaped bar and a dot
@@ -346,6 +352,7 @@ void Icons::question(float angle, float scale){
     if (animeTheme()){ animePanel(Panel::Question, scale); return; }
     if (lcarsTheme()){ lcarsPanel(Panel::Question, scale); return; }
     if (galacticTheme()){ galacticPanel(Panel::Question, scale); return; }
+    if (mechTheme()){ mechPanel(Panel::Question, scale); return; }
     sign(kColorBlue, angle, scale);
 
     // Question mark: a 260-degree hook, a short stem and a dot
@@ -359,6 +366,7 @@ void Icons::error(float angle, float scale){
     if (animeTheme()){ animePanel(Panel::Error, scale); return; }
     if (lcarsTheme()){ lcarsPanel(Panel::Error, scale); return; }
     if (galacticTheme()){ galacticPanel(Panel::Error, scale); return; }
+    if (mechTheme()){ mechPanel(Panel::Error, scale); return; }
     canvas_.fillSprite(kColorBg);
     canvas_.fillCircle(px(cx_), px(cy_), px(56 * scale * unit_), kColorRed);
 
@@ -371,6 +379,7 @@ void Icons::paused(float angle, const Hourglass& h){
     if (animeTheme()){ animeStandby(h); return; }
     if (lcarsTheme()){ lcarsStandby(h); return; }
     if (galacticTheme()){ galacticStandby(h); return; }
+    if (mechTheme()){ mechStandby(h); return; }
     canvas_.fillSprite(kColorBg);
 
     // The whole hourglass turns around the centre during the flip
@@ -435,6 +444,7 @@ void Icons::done(float angle){
     if (animeTheme()){ animePanel(Panel::Done, 1.0f); return; }
     if (lcarsTheme()){ lcarsPanel(Panel::Done, 1.0f); return; }
     if (galacticTheme()){ galacticPanel(Panel::Done, 1.0f); return; }
+    if (mechTheme()){ mechPanel(Panel::Done, 1.0f); return; }
     canvas_.fillSprite(kColorBg);
     canvas_.fillCircle(px(cx_), px(cy_), px(56 * unit_), kColorGreen);
 
@@ -444,6 +454,7 @@ void Icons::done(float angle){
 }
 
 void Icons::blank(){
+    if (mechTheme()){ mechBlank(); return; }
     canvas_.fillSprite(kColorBg);
 }
 

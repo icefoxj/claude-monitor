@@ -4,8 +4,8 @@ A WAV file here replaces one of the Tab5's alert sounds in **your** build; any s
 
 | File | Plays when |
 |---|---|
-| `classic-attention.wav`, `anime-attention.wav`, `lcars-attention.wav`, `galactic-attention.wav` | a tile asks for a permission in that theme, and when you switch to that theme |
-| `classic-failure.wav`, `anime-failure.wav`, `lcars-failure.wav`, `galactic-failure.wav` | a tile shows an error in that theme |
+| `classic-attention.wav`, `anime-attention.wav`, `lcars-attention.wav`, `galactic-attention.wav`, `mech-attention.wav` | a tile asks for a permission in that theme, and when you switch to that theme |
+| `classic-failure.wav`, `anime-failure.wav`, `lcars-failure.wav`, `galactic-failure.wav`, `mech-failure.wav` | a tile shows an error in that theme |
 
 Uncompressed PCM, 8 or 16 bits, mono or stereo, 4 to 192 kHz; mono at 32 kHz is plenty:
 
