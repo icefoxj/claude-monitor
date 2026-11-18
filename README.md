@@ -250,6 +250,8 @@ On an AtomS3R that has never been flashed, hold the side reset button about two 
 .\host\Install-MonitorDaemon.ps1 -PortName COM5      # -LogEvents to keep every raw hook payload; -AccountUsage for the plan usage; -DesktopNotifications for Claude Desktop's Cowork; -Uninstall to remove
 ```
 
+The task runs the daemon from this folder by its full path. **If you move or rename the repository folder, run the installer again from the new place**, with the same switches: the running daemon carries on until you log off, and then the task cannot find the script, the daemon does not start, and the hooks stop reaching the board with no error anywhere. The `build/` folders of the firmware projects keep full paths too; after a move, `idf.py fullclean` before the next build.
+
 Check that it found the board:
 
 ```powershell
@@ -367,7 +369,7 @@ On the Tab5, `tools/Get-Screenshot.ps1 -PortName COM7 -OutFile shot.png` capture
 
 ## The host daemon
 
-`host/Monitor-Daemon.ps1` is a PowerShell 7 script that keeps the port open and listens on `http://localhost:47831/`. `host/Install-MonitorDaemon.ps1 -PortName COM5` installs it as a scheduled task that starts hidden at logon (and starts it right away); `-Uninstall` removes it.
+`host/Monitor-Daemon.ps1` is a PowerShell 7 script that keeps the port open and listens on `http://localhost:47831/`. `host/Install-MonitorDaemon.ps1 -PortName COM5` installs it as a scheduled task that starts hidden at logon (and starts it right away); `-Uninstall` removes it. The task names the script by its full path: after moving the repository, install again from the new folder.
 
 What it does with each event: keeps one state per Claude Code session (`session_id` comes with every hook), sends the device the most urgent state among the live sessions (`error` > `!` = `?` > hourglass > compacting > processing > idle) plus the list of all of them for the session dots, counts subagents across sessions, drops a session on `SessionEnd` or after four hours of silence, and re-sends everything when the device reappears after a reboot or re-plug. It pings the device every 30 s, which is how the device notices when the daemon is gone. A device whose `VERSION` lists `sessions` in `features=` (the Tab5) also gets one `session` line per live session whenever something in it changes, and one whose features include `events` gets every hook event as an `event` line.
 

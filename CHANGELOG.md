@@ -2,6 +2,12 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
+## 1.6.2 — 2026-11-18
+
+### Documentation
+
+- Moving or renaming the repository folder: the daemon's scheduled task runs `Monitor-Daemon.ps1` by its full path, so after a move it no longer starts at logon and the hooks stop reaching the board with no error. The README (installing the daemon) and CLAUDE.md (Gotchas) now say to run `Install-MonitorDaemon.ps1` again from the new folder with the same switches, and to `idf.py fullclean` the firmware `build/` folders, which keep full paths too. No change to the firmware or the scripts; the images are 1.6.1's under a new version.
+
 ## 1.6.1 — 2026-11-18
 
 ### Changed
