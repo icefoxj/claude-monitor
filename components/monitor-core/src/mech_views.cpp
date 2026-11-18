@@ -22,21 +22,21 @@ namespace {
 
 inline int ip(float v){ return static_cast<int>(lroundf(v)); }
 
-// Green, amber or red for a limit's percentage, as in the other themes
+// Green, red-orange or red for a limit's percentage (the other themes: amber for the middle)
 uint16_t levelColor(float percent, const std::string& severity){
     int level = percent >= 80.0f ? 2 : (percent >= 50.0f ? 1 : 0);
     if (severity == "critical") level = 2;
     else if (severity == "warning" && level < 1) level = 1;
-    return level == 2 ? kRed : (level == 1 ? kAmber : kGreen);
+    return level == 2 ? kRed : (level == 1 ? kWarn : kGreen);
 }
 
 uint16_t splitColor(int i){
-    static constexpr uint16_t kColors[] = { kOrange, kCyan, kViolet, kGreen, kDim };
+    static constexpr uint16_t kColors[] = { kYellow, kCyan, kViolet, kGreen, kDim };
     return kColors[i % 5];
 }
 
 uint16_t toneColor(int tone, uint16_t plain){
-    return tone < 0 ? kDim : (tone == 2 ? kRed : (tone == 1 ? kAmber : plain));
+    return tone < 0 ? kDim : (tone == 2 ? kRed : (tone == 1 ? kWarn : plain));
 }
 
 // A gauge: a chamfered track of slanted blocks, each lit in color(i, n)
@@ -214,18 +214,18 @@ namespace {
 void chartBox(M5Canvas& c, const Usage& usage, int32_t elapsedSec, int bx, int by, int bw, int bh){
     UsageChart ch;
     if (!usageChart(usage, elapsedSec, ch)){
-        drawText(c, "NO WEEKLY DATA", static_cast<float>(bx), static_cast<float>(by + 24), 13, kAmber);
+        drawText(c, "NO WEEKLY DATA", static_cast<float>(bx), static_cast<float>(by + 24), 13, kWarn);
         return;
     }
     const int px = bx + 52, py = by + 10;
     const int pw = bw - 52 - 10, ph = bh - 10 - 34;
-    brackets(c, px - 7, py - 7, pw + 14, ph + 14, 16, 2, kOrange);
+    brackets(c, px - 7, py - 7, pw + 14, ph + 14, 16, 2, kYellow);
     auto X = [&](int64_t t) { return px + static_cast<int>(static_cast<double>(pw) * (t - ch.start) / (ch.end - ch.start)); };
     auto Y = [&](float v) { return py + ph - static_cast<int>(ph * v / ch.yMax); };
 
     for (int v = 25; v <= static_cast<int>(ch.yMax); v += 25){
         const int y = Y(static_cast<float>(v));
-        for (int x = px; x < px + pw; x += 6) c.drawFastHLine(x, y, 3, v == 100 ? kAmber : kLine);
+        for (int x = px; x < px + pw; x += 6) c.drawFastHLine(x, y, 3, v == 100 ? kWarn : kLine);
         char t[16];
         snprintf(t, sizeof(t), "%d%%", v);
         drawText(c, t, static_cast<float>(px - 12), y + 5.0f, 10, kDim, Align::Right);
@@ -255,7 +255,7 @@ void chartBox(M5Canvas& c, const Usage& usage, int32_t elapsedSec, int bx, int b
 
     // The even pace; the usage so far, filled underneath, the line on top
     dashed(c, X(ch.start), Y(0.0f), X(ch.end), Y(100.0f), kDim);
-    const uint16_t curve = ch.week ? levelColor(ch.week->percent, ch.week->severity) : kOrange;
+    const uint16_t curve = ch.week ? levelColor(ch.week->percent, ch.week->severity) : kYellow;
     const uint16_t fill = mix(kPanel, curve, 0.22f);
     const int xNow = X(ch.points.back().t);
     int prev = -1;
@@ -279,7 +279,7 @@ void chartBox(M5Canvas& c, const Usage& usage, int32_t elapsedSec, int bx, int b
             const float f = (ch.yMax - ch.week->percent) / (ch.pace.projected - ch.week->percent);
             x1 = xNow + static_cast<int>((X(ch.end) - xNow) * f);
         }
-        const uint16_t pc = ch.pace.projected > 100.0f ? kRed : kAmber;
+        const uint16_t pc = ch.pace.projected > 100.0f ? kRed : kWarn;
         dashed(c, xNow, yNow, x1, Y(v1), pc);
         char t[16];
         snprintf(t, sizeof(t), "%d%%", static_cast<int>(lroundf(ch.pace.projected)));
@@ -298,13 +298,13 @@ void chartBox(M5Canvas& c, const Usage& usage, int32_t elapsedSec, int bx, int b
     }
     if (ch.noHistory){
         drawText(c, "NO READINGS YET: THE LINE IS THE AVERAGE SO FAR", static_cast<float>(px + 10),
-                 static_cast<float>(py + 20), 10, kAmber);
+                 static_cast<float>(py + 20), 10, kWarn);
     }
 }
 
 void projectsBox(M5Canvas& c, const Usage& usage, int bx, int by, int bw, int bh){
     if (usage.projects.empty()){
-        drawText(c, "NO CLAUDE CODE TRANSCRIPTS READ THIS WEEK", static_cast<float>(bx), static_cast<float>(by + 20), 11, kAmber);
+        drawText(c, "NO CLAUDE CODE TRANSCRIPTS READ THIS WEEK", static_cast<float>(bx), static_cast<float>(by + 20), 11, kWarn);
         return;
     }
     const int todayR = bx + bw;
@@ -326,11 +326,11 @@ void projectsBox(M5Canvas& c, const Usage& usage, int bx, int by, int bw, int bh
         const int cy = y + rowH / 2;
         const std::string name = fitText(other ? "OTHER PROJECTS" : upper(p.name), 12, static_cast<float>(nameW));
         drawText(c, name.c_str(), static_cast<float>(bx), cy + 6.0f, 12, other ? kDim : kWhite);
-        gauge(c, barX, cy - 6, barW, 12, maxWeek > 0.0f ? p.week / maxWeek : 0.0f, other ? kDim : kOrange);
+        gauge(c, barX, cy - 6, barW, 12, maxWeek > 0.0f ? p.week / maxWeek : 0.0f, other ? kDim : kYellow);
         char t[16];
         if (p.week > 0.0f && p.week < 1.0f) snprintf(t, sizeof(t), "<1%%");
         else snprintf(t, sizeof(t), "%d%%", static_cast<int>(lroundf(p.week)));
-        drawText(c, t, static_cast<float>(weekR), cy + 8.0f, 16, other ? kDim : kOrange, Align::Right);
+        drawText(c, t, static_cast<float>(weekR), cy + 8.0f, 16, other ? kDim : kYellow, Align::Right);
         if (p.today <= 0.0f) snprintf(t, sizeof(t), "-");
         else if (p.today < 1.0f) snprintf(t, sizeof(t), "<1%%");
         else snprintf(t, sizeof(t), "%d%%", static_cast<int>(lroundf(p.today)));
@@ -365,7 +365,7 @@ void usagePage(M5Canvas& c, const Usage& usage, int32_t elapsedSec){
     const UsageSwitch sw = usageThemeSwitch(W);
     int x = titleBand(c, kUnitCode, 0, 0, 46);
     x += drawText(c, "// CLAUDE USAGE", static_cast<float>(x), 33.0f, 20, kWhite) + 16;
-    x += dashes(c, x, 23, 4, 1.4f, kOrange, kLine) + 16;
+    x += dashes(c, x, 23, 4, 1.4f, kYellow, kLine) + 16;
     x += drawText(c, "PLAN TELEMETRY", static_cast<float>(x), 29.0f, 11, kDim) + 18;
     char age[40];
     usageAgeText(usage.ageSec + elapsedSec, age, sizeof(age));
@@ -436,7 +436,7 @@ void saverCard(M5Canvas& c, int x, int y, int w, int h, int pad, int header,
     const int cut = 18;
     plate(c, x, y, w, h, cut, kPanel);
     edge(c, x, y, w, h, cut, kLine);
-    tab(c, x + 1, y + 1, cut, 5, y + 50, kOrange);
+    tab(c, x + 1, y + 1, cut, 5, y + 50, kYellow);
     const int x1 = x + w - pad;
     drawText(c, "CLAUDE USAGE", static_cast<float>(x + pad), static_cast<float>(y + 38), 18, kWhite);
     if (!data){
@@ -449,7 +449,7 @@ void saverCard(M5Canvas& c, int x, int y, int w, int h, int pad, int header,
     drawText(c, age, static_cast<float>(x1), static_cast<float>(y + 38), 11, kDim, Align::Right);
     const int dw = 60;
     c.drawFastHLine(x + pad, y + 52, x1 - x - pad - dw - 10, kLine);
-    dashes(c, x1 - dw, y + 52, 4, 1.2f, kOrange, kLine);
+    dashes(c, x1 - dw, y + 52, 4, 1.2f, kYellow, kLine);
     usageRows(c, x + pad, y + header, x1 - x - pad, usageRowsHeight(usageRowCount(usage)), usage, elapsedSec, false);
 }
 
@@ -481,12 +481,12 @@ void inspector(M5Canvas& c, const EventLog& log, const char* statusLine, int64_t
     int y = ct + 8;
     const EventEntry* last = log.last();
     if (!last){
-        drawText(c, "WAITING FOR THE FIRST HOOK EVENT", static_cast<float>(lx), static_cast<float>(y + 24), 13, kAmber);
+        drawText(c, "WAITING FOR THE FIRST HOOK EVENT", static_cast<float>(lx), static_cast<float>(y + 24), 13, kWarn);
     } else {
         // The last event: its number on a chip, its name, the project, its age
         char seq[16];
         snprintf(seq, sizeof(seq), "#%lu", static_cast<unsigned long>(last->seq));
-        const int cw = chip(c, seq, lx, y + 14, 10, kOrange, kPanel, Align::Left);
+        const int cw = chip(c, seq, lx, y + 14, 10, kYellow, kPanel, Align::Left);
         char age[32];
         ageText(last->receivedMs, nowMs, age, sizeof(age));
         const int ageW = glyphs::text(c, age, rx, y + 14, Face::Mono, 16, kDim, textdatum_t::middle_right);
@@ -496,7 +496,7 @@ void inspector(M5Canvas& c, const EventLog& log, const char* statusLine, int64_t
         const char* project = last->event.find("project");
         if (project && project[0]){
             const std::string p = fitText(upper(project), 16, static_cast<float>(rx - ageW - 20 - (nx + nw + 14)));
-            drawText(c, p.c_str(), static_cast<float>(nx + nw + 14), y + 22.0f, 16, kOrange);
+            drawText(c, p.c_str(), static_cast<float>(nx + nw + 14), y + 22.0f, 16, kYellow);
         }
         y += 44;
 
@@ -533,7 +533,7 @@ void inspector(M5Canvas& c, const EventLog& log, const char* statusLine, int64_t
         const uint16_t color = rows == 0 ? kWhite : kDim;
         char seq[16];
         snprintf(seq, sizeof(seq), "%lu", static_cast<unsigned long>(it->seq));
-        glyphs::text(c, seq, lx + 44, y, Face::Mono, 16, rows == 0 ? kOrange : mix(kOrange, kPanel, 0.4f), textdatum_t::top_right);
+        glyphs::text(c, seq, lx + 44, y, Face::Mono, 16, rows == 0 ? kYellow : mix(kYellow, kPanel, 0.4f), textdatum_t::top_right);
         glyphs::text(c, age, lx + 58, y, Face::Mono, 16, color);
         std::string what = summary ? summary : it->event.name;
         if (project && project[0]) what += "   [" + std::string(project) + "]";

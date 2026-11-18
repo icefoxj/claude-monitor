@@ -1,7 +1,7 @@
 // The mech theme's icons, as Icons members: the HUD of the house AtomS3R
 // monitors (HM-01) in 128-space, scaled to the canvas and drawn upright
 // (the Tab5 turns the whole display). Every icon has the same frame:
-// orange corner brackets with hazard slashes (the livery), a ring of 36
+// yellow corner brackets with hazard slashes (the livery), a ring of 36
 // segments, a chip at the top with the state's word. Work in progress is
 // a reticle with a comet of lit segments running round the ring; the
 // states that want you light the whole ring around the stroke font's own
@@ -110,7 +110,7 @@ void Icons::mechCore(float spin, GearStyle style){
     const Hud h{ canvas_, cx_, cy_, unit_ };
     const bool compacting = style == GearStyle::Compacting;
     const Look lk = look(compacting ? State::Compacting : State::Processing);
-    h.frame(kOrange);
+    h.frame(kYellow);
 
     // A comet of lit segments running clockwise: a lap per turn of the
     // spin (about two seconds), half that while compacting
@@ -173,7 +173,7 @@ void Icons::mechPanel(Panel kind, float scale){
         case Panel::Done:     st = State::Idle;        break;
     }
     const Look lk = look(st);
-    h.frame(kOrange);
+    h.frame(kYellow);
     for (int i = 0; i < kSegments; i++) h.segment(i, lk.color);
     h.chipAtTop(lk.label, lk.color, kPanel);
 
@@ -193,7 +193,7 @@ void Icons::mechPanel(Panel kind, float scale){
 void Icons::mechStandby(const Hourglass& hg){
     const Hud h{ canvas_, cx_, cy_, unit_ };
     const Look lk = look(State::Paused);
-    h.frame(kOrange);
+    h.frame(kYellow);
 
     // The ring drains with the sand; empty and blinking while the glass
     // would turn over, full again after it
@@ -226,8 +226,8 @@ void Icons::mechBlank(){
 
 void Icons::mechRing(float fraction, int lap){
     // The work time on a thin track just outside the segments, clockwise
-    // from the top: orange, then amber over it, then red
-    static constexpr uint16_t kLap[] = { kOrange, kAmber, kRed };
+    // from the top: white (RUN's colour), then red-orange over it, then red
+    static constexpr uint16_t kLap[] = { kWhite, kWarn, kRed };
     const Hud h{ canvas_, cx_, cy_, unit_ };
     h.arc(kTrackIn, kTrackOut, -90.0f, 270.0f, kLine);
     if (lap >= 3){ h.arc(kTrackIn, kTrackOut, -90.0f, 270.0f, kRed); return; }

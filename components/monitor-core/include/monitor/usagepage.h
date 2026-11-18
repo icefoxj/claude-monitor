@@ -58,7 +58,7 @@ UsageSwitch usageThemeSwitch(int pageWidth);
 // The icon, outlined in the current theme's look: one stripe per theme the
 // build has (the classic's grey with a green dot, the anime's orange with
 // a hexagon, the LCARS lilac with a peach bar, the galactic yellow
-// reticle, the mech black with an orange lamp over hazard stripes), in
+// reticle, the mech black with a yellow lamp over hazard stripes), in
 // the order a tap goes
 // through them, the one in use lit. Not drawn with a single theme
 void drawThemeSwitch(LovyanGFX& g, const UsageSwitch& s);

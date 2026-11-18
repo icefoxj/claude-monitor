@@ -229,7 +229,7 @@ namespace {
 // One theme's stripe in the switch, at `percent` of its brightness: the
 // classic's grey with a green dot, the anime's orange with a hexagon, the
 // LCARS lilac with a peach bar and a black cut, the galactic yellow reticle,
-// the mech black with an orange lamp over hazard stripes
+// the mech black with a yellow lamp over hazard stripes
 void themeEmblem(LovyanGFX& g, Theme t, int x, int y, int w, int h, int percent){
     auto c = [&](uint16_t color){ return glyphs::shade(color, percent); };
     const float cx = x + w * 0.5f, cy = y + h * 0.5f;
@@ -256,8 +256,8 @@ void themeEmblem(LovyanGFX& g, Theme t, int x, int y, int w, int h, int percent)
             break;
         case Theme::Mech:
             g.fillRect(x, y, w, h, c(mech::kPanel));
-            mech::hazard(g, x, y + h * 2 / 3, w, h - h * 2 / 3, c(mech::kOrange), 8);
-            mech::diamond(g, static_cast<int>(cx), y + h / 3, static_cast<int>(r * 0.8f), c(mech::kOrange));
+            mech::hazard(g, x, y + h * 2 / 3, w, h - h * 2 / 3, c(mech::kYellow), 8);
+            mech::diamond(g, static_cast<int>(cx), y + h / 3, static_cast<int>(r * 0.8f), c(mech::kYellow));
             break;
     }
 }
@@ -289,7 +289,7 @@ void drawThemeSwitch(LovyanGFX& g, const UsageSwitch& s){
     } else if (galacticTheme()){
         galactic::brackets(g, x - 6, y - 6, n + 12, n + 12, 14, 2, galactic::kYellow);
     } else if (mechTheme()){
-        mech::edge(g, x - 6, y - 6, n + 12, n + 12, 12, mech::kOrange, mech::kTLBR, 2);
+        mech::edge(g, x - 6, y - 6, n + 12, n + 12, 12, mech::kYellow, mech::kTLBR, 2);
     } else {
         g.drawRoundRect(x - 5, y - 5, n + 10, n + 10, 12, kDim);
         g.drawRoundRect(x - 4, y - 4, n + 8, n + 8, 11, kDim);

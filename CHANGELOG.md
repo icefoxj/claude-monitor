@@ -2,6 +2,13 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
+## Unreleased
+
+### Changed
+
+- The mech theme's livery is yellow (#FFCC00) instead of orange (#FF7A1A), as the house palette of the author's projects is now black, grey and yellow: the panels' tabs, the title bands (the unit code knocked out in black), the icons' corner brackets and hazard slashes, the dashes, the usage page's projects and the theme switch's lamp. RUN (Claude at work) is now white, and so is the first lap of the work ring: in yellow it could not be told apart from HOLD's amber. The anime and LCARS themes keep their own oranges. The README's mech pictures still show the orange livery until they are taken again on a board.
+- The mech theme's warnings are red-orange (#FF5533) instead of amber (#FFC23A), which was too close to the new yellow: HOLD (usage limit), a limit getting full, the second lap of the work ring, the even-pace projection and the page's notices. Its fault red is a deeper #E8203A (was #FF4040) so the two stay apart. The other themes keep their colours.
+
 ## 1.6.2 — 2026-11-18
 
 ### Documentation

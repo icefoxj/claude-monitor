@@ -74,7 +74,7 @@ constexpr int kProtocolVersion = 9;
 // elbows and capsules of 90s TV starship consoles), the galactic theme
 // (the vector targeting computers of 70s space-opera films) or the mech
 // theme (the house look of the other projects' apps and HUDs on black:
-// panels with 45° cuts, orange livery, hazard stripes, a stroke font); all
+// panels with 45° cuts, yellow livery, hazard stripes, a stroke font); all
 // but the first Tab5 only. New themes go at the end: the board stores the
 // value
 enum class Theme { Classic, Anime, Lcars, Galactic, Mech };

@@ -32,12 +32,14 @@ uint16_t mix(uint16_t a, uint16_t b, float t){
 
 Look look(State s){
     switch (s){
-        case State::Processing:  return { kOrange, "RUN",     "AT WORK" };
+        // White, not the yellow livery: yellow was too close to the amber
+        // HOLD had then (the livery was orange up to 1.6.2)
+        case State::Processing:  return { kWhite,  "RUN",     "AT WORK" };
         case State::Compacting:  return { kDim,    "COMPACT", "CONTEXT" };
         case State::WaitingUser: return { kRed,    "APPROVE", "OPERATOR INPUT" };
         case State::Question:    return { kCyan,   "QUERY",   "ANSWER REQUIRED" };
         case State::Error:       return { kRed,    "FAULT",   "SEE TERMINAL" };
-        case State::Paused:      return { kAmber,  "HOLD",    "USAGE LIMIT" };
+        case State::Paused:      return { kWarn,   "HOLD",    "USAGE LIMIT" };
         case State::Idle:        return { kGreen,  "READY",   "TURN COMPLETE" };
         case State::Off:         return { kLine,   "OFFLINE", "" };
     }
@@ -175,16 +177,16 @@ int titleBand(LovyanGFX& g, const char* code, int x, int y, int h){
     const float weight = cap * 0.19f;
     const int pad = std::max(4, h * 3 / 8);
     const int end = x + pad + ip(textWidth(code, cap, weight)) + pad / 2;
-    g.fillRect(x, y, end - x, h, kOrange);
-    g.fillTriangle(end, y, end + h, y, end, y + h - 1, kOrange);   // the 45° end, longer at the top
+    g.fillRect(x, y, end - x, h, kYellow);
+    g.fillTriangle(end, y, end + h, y, end, y + h - 1, kYellow);   // the 45° end, longer at the top
     drawText(g, code, static_cast<float>(x + pad), y + h * 0.5f + cap * 0.5f, cap, kBg, Align::Left, weight);
     // Two thin bars after it, parallel to the cut
     const int gap = std::max(3, h / 8);
     int bx = end + h + gap;
     for (int k = 0; k < 2; k++){
         const int bw = k == 0 ? std::max(3, h / 7) : std::max(2, h / 12);
-        g.fillTriangle(bx, y, bx + bw, y, bx - h + bw, y + h - 1, kOrange);
-        g.fillTriangle(bx, y, bx - h + bw, y + h - 1, bx - h, y + h - 1, kOrange);
+        g.fillTriangle(bx, y, bx + bw, y, bx - h + bw, y + h - 1, kYellow);
+        g.fillTriangle(bx, y, bx - h + bw, y + h - 1, bx - h, y + h - 1, kYellow);
         bx += bw + gap;
     }
     return bx + std::max(6, h / 4);
@@ -226,7 +228,7 @@ void drawTile(LovyanGFX& g, const Tile& t){
     plate(g, px, py, pw, ph, cut, kPanel);
     edge(g, px, py, pw, ph, cut, t.frame, kTLBR, band >= 48 ? 2 : 1);
     const int s = std::max(3, band / 10);
-    tab(g, px + 1, py + 1, cut, s, t.headY + band / 2 - 4, kOrange);
+    tab(g, px + 1, py + 1, cut, s, t.headY + band / 2 - 4, kYellow);
 
     // Header: the name, a rule (hazard stripes for a red state), the dashes,
     // the state's chip

@@ -32,7 +32,7 @@ menu "claude-monitor"
         default n
         help
             Lets "theme mech" switch the views to the house mech look:
-            outlined panels with 45-degree cuts on black, an orange livery, hazard
+            outlined panels with 45-degree cuts on black, a yellow livery, hazard
             stripes and a chamfered stroke font. Its text is drawn as
             strokes, so this embeds nothing; hook data uses the anime
             theme's monospace font when that theme is on, DejaVu otherwise.

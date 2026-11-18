@@ -13,13 +13,15 @@
 
 // The mech theme: the house look of the other projects' Windows apps (the
 // "Studio" apps), their CoreS3/AtomS3R HUDs and the printed liveries, on
-// black: panels outlined with 45° cuts, an orange tab on each panel's
-// corner, a title band with the unit code knocked out of orange, hazard
+// black: panels outlined with 45° cuts, a yellow tab on each panel's
+// corner, a title band with the unit code knocked out of yellow, hazard
 // stripes, speed dashes, corner brackets, reticles, diamond lamps and the
-// chamfered stroke font (mechfont.h), upper case only. Orange is the
-// livery; cyan, green, amber and red are states. Everything is procedural,
-// so the theme needs no font files: CONFIG_MONITOR_MECH_THEME only makes it
-// selectable. Values that are not words (hook data) use the anime theme's
+// chamfered stroke font (mechfont.h), upper case only. Yellow is the
+// livery (it was orange up to 1.6.2: no orange accent any more); white,
+// cyan, green, red-orange (warnings) and red (faults) are states.
+// Everything is procedural, so the theme needs no font files:
+// CONFIG_MONITOR_MECH_THEME only makes it selectable. Values that are not
+// words (hook data) use the anime theme's
 // monospace face when the build has it (glyphs.h), DejaVu otherwise.
 
 namespace monitor::mech {
@@ -38,11 +40,11 @@ constexpr uint16_t kField   = rgb(0x11, 0x13, 0x16);   // tracks, fields
 constexpr uint16_t kLine    = rgb(0x3A, 0x40, 0x48);   // edges, rules, unlit segments
 constexpr uint16_t kDim     = rgb(0x8A, 0x92, 0x9C);   // labels
 constexpr uint16_t kWhite   = rgb(0xF2, 0xF2, 0xF2);
-constexpr uint16_t kOrange  = rgb(0xFF, 0x7A, 0x1A);   // the livery
+constexpr uint16_t kYellow  = rgb(0xFF, 0xCC, 0x00);   // the livery (0xFE60); dark ink on it, never white
 constexpr uint16_t kCyan    = rgb(0x3F, 0xC8, 0xFF);
 constexpr uint16_t kGreen   = rgb(0x38, 0xD4, 0x7A);
-constexpr uint16_t kRed     = rgb(0xFF, 0x40, 0x40);
-constexpr uint16_t kAmber   = rgb(0xFF, 0xC2, 0x3A);
+constexpr uint16_t kRed     = rgb(0xE8, 0x20, 0x3A);   // faults (0xE907); deeper than #FF4040 so it stays apart from kWarn
+constexpr uint16_t kWarn    = rgb(0xFF, 0x55, 0x33);   // warnings, red-orange (0xFAA6); was amber #FFC23A, too close to the yellow
 constexpr uint16_t kViolet  = rgb(0xB4, 0x8C, 0xFF);
 
 // The unit code on the title bands, as EG-01, HM-01 and the others carry theirs
@@ -93,16 +95,16 @@ int chip(LovyanGFX& g, const char* s, int x, int cy, float cap, uint16_t fill, u
 // The same as an outline in `color` on kPanelHi
 int tag(LovyanGFX& g, const char* s, int x, int cy, float cap, uint16_t color, Align align);
 
-// The title band: `code` knocked out of an orange band from (x, y), `h`
+// The title band: `code` knocked out of a yellow band from (x, y), `h`
 // tall, its end cut at 45°, then two thin slanted bars. Returns where
 // the next thing can start
 int titleBand(LovyanGFX& g, const char* code, int x, int y, int h);
 
-// The house panel: a chamfered plate with an outline, the orange tab on
+// The house panel: a chamfered plate with an outline, the yellow tab on
 // its cut corner, the title in the stroke font, an optional subtitle, a
 // rule and speed dashes. Returns the y where its content starts
 int panel(LovyanGFX& g, int x, int y, int w, int h, const char* title, const char* sub = nullptr,
-          uint16_t accent = kOrange, float cap = 13.0f);
+          uint16_t accent = kYellow, float cap = 13.0f);
 
 // The stripe along a panel's cut corner and down its side to `bottom`
 void tab(LovyanGFX& g, int x, int y, int cut, int s, int bottom, uint16_t color);
@@ -120,7 +122,7 @@ struct Tile {
     const char* index = nullptr;      // "01", on the footer's band; none without
     const char* name = "";
     const char* label = "";           // the chip, in `color`
-    uint16_t color = kOrange;         // the state's: chip, clock, first dash
+    uint16_t color = kYellow;         // the state's: chip, clock, first dash
     uint16_t frame = kLine;           // the panel's outline now (the board blinks it for a red state)
     bool alarm = false;               // hazard stripes in the header, in `frame`
     const char* clock = nullptr;      // footer, right

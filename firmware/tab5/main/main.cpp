@@ -758,7 +758,7 @@ extern "C" void app_main(void){
             t.headY = usageNameY; t.footY = usageAgeY; t.band = style.band;
             t.name  = "Claude usage";
             t.label = "LIMITS";
-            t.color = monitor::mech::kOrange;
+            t.color = monitor::mech::kYellow;
             t.note  = age;
             monitor::mech::drawTile(g, t);
             monitor::drawUsageRows(g, usageBox.x, usageBox.y, usageBox.w, usageBox.h, usage, elapsed, monitor::mech::kPanel);
