@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstdint>
-
 #include "monitor/protocol.h"
 
 namespace monitor {
@@ -25,10 +23,6 @@ inline bool animeTheme(){ return activeTheme() == Theme::Anime; }
 inline bool lcarsTheme(){ return activeTheme() == Theme::Lcars; }
 inline bool galacticTheme(){ return activeTheme() == Theme::Galactic; }
 inline bool mechTheme(){ return activeTheme() == Theme::Mech; }
-
-// What the screen shows behind everything in the active theme: black, but
-// for the mech theme's graphite (RGB565)
-uint16_t themeBackground();
 
 // Kept in NVS (namespace "display", key "theme"), apart from the
 // calibration's namespace, which "calibrate reset" erases whole.

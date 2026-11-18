@@ -12,8 +12,8 @@
 #include "monitor/usage.h"
 
 // The mech theme: the house look of the other projects' Windows apps (the
-// "Studio" apps), their CoreS3/AtomS3R HUDs and the printed liveries.
-// Graphite ground, panels with 45° cuts, an orange tab on each panel's
+// "Studio" apps), their CoreS3/AtomS3R HUDs and the printed liveries, on
+// black: panels outlined with 45° cuts, an orange tab on each panel's
 // corner, a title band with the unit code knocked out of orange, hazard
 // stripes, speed dashes, corner brackets, reticles, diamond lamps and the
 // chamfered stroke font (mechfont.h), upper case only. Orange is the
@@ -28,9 +28,11 @@ constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b){
     return static_cast<uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-// The house palette (the Studio apps' Theme class, the HUDs' constants)
-constexpr uint16_t kBg      = rgb(0x15, 0x17, 0x1A);   // graphite, behind everything
-constexpr uint16_t kPanel   = rgb(0x1F, 0x23, 0x28);   // panels and the icons' ground
+// The house palette (the Studio apps' Theme class, the HUDs' constants),
+// but for the ground: black like the other themes, where the apps have a
+// graphite screen (#15171A) and grey panels (#1F2328)
+constexpr uint16_t kBg      = rgb(0, 0, 0);            // behind everything
+constexpr uint16_t kPanel   = rgb(0, 0, 0);            // inside a panel, the icons' ground
 constexpr uint16_t kPanelHi = rgb(0x27, 0x2C, 0x32);   // a plate on a panel
 constexpr uint16_t kField   = rgb(0x11, 0x13, 0x16);   // tracks, fields
 constexpr uint16_t kLine    = rgb(0x3A, 0x40, 0x48);   // edges, rules, unlit segments

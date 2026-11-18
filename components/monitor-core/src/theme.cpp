@@ -3,8 +3,6 @@
 #include <nvs.h>
 #include <sdkconfig.h>
 
-#include "monitor/mech.h"
-
 namespace monitor {
 
 namespace {
@@ -33,10 +31,6 @@ bool themeAvailable(Theme t){
 #endif
         default: return false;
     }
-}
-
-uint16_t themeBackground(){
-    return active == Theme::Mech ? mech::kBg : 0;
 }
 
 bool setActiveTheme(Theme t){

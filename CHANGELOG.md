@@ -2,6 +2,12 @@
 
 Versions are annotated git tags (`vX.Y.Z`) on `main`; each one has a [GitHub release](https://github.com/icefoxj/claude-monitor/releases) with prebuilt images: the AtomS3R's since 1.0.0, the Tab5's since 1.3.0. Dates are release dates.
 
+## 1.6.1 — 2026-11-18
+
+### Changed
+
+- The mech theme draws on black, like the other themes, instead of the Studio apps' graphite: the screen and the inside of its panels, tiles and icons are black, and the panels keep their outlines, orange tabs and chips. The Tab5's screen is black in every theme again (`themeBackground()` is gone). README pictures regenerated.
+
 ## 1.6.0 — 2026-11-18
 
 ### Added

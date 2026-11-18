@@ -539,12 +539,11 @@ extern "C" void app_main(void){
         const int W = M5.Display.width();
         const int H = M5.Display.height();
         const bool landscape = W > H;
-        M5.Display.fillScreen(monitor::themeBackground());
+        M5.Display.fillScreen(TFT_BLACK);
         for (auto& s : slots) s.ui.setVisible(false);
         placeholder.ui.setVisible(false);
 
-        // The panel is the theme's ground now (black, graphite for mech), and
-        // so is the frame drawTexts compares with
+        // The panel is black now, and so is the frame drawTexts compares with
         for (M5Canvas* c : { textCur, textPrev }){
             if (c->width() != W || c->height() != H){
                 c->deleteSprite();
@@ -555,7 +554,7 @@ extern "C" void app_main(void){
                 }
             }
         }
-        textPrev->fillScreen(monitor::themeBackground());
+        textPrev->fillScreen(TFT_BLACK);
         textRegions.clear();
 
         if (view == View::Detail && detail && detail->used){
@@ -704,7 +703,7 @@ extern "C" void app_main(void){
         if (!usageShown) return;
         const int32_t elapsed = static_cast<int32_t>((nowMs() - usageMs) / 1000);
         if (!monitor::mechTheme()){
-            monitor::drawUsageRows(g, usageBox.x, usageBox.y, usageBox.w, usageBox.h, usage, elapsed, monitor::themeBackground());
+            monitor::drawUsageRows(g, usageBox.x, usageBox.y, usageBox.w, usageBox.h, usage, elapsed, TFT_BLACK);
         }
         if (monitor::animeTheme()){
             char age[40];
@@ -814,7 +813,7 @@ extern "C" void app_main(void){
     auto drawTexts = [&]() {
         if (view == View::Usage) return;   // the page has its own
         if (textRegions.empty() || !textCur->getBuffer() || !textPrev->getBuffer()) return;
-        for (const Rect& r : textRegions) textCur->fillRect(r.x, r.y, r.w, r.h, monitor::themeBackground());
+        for (const Rect& r : textRegions) textCur->fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
         composeTexts(*textCur);
         const int W = textCur->width(), H = textCur->height();
         const auto* cur  = static_cast<const uint16_t*>(textCur->getBuffer());

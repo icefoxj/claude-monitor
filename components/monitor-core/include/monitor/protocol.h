@@ -73,7 +73,7 @@ constexpr int kProtocolVersion = 9;
 // NERV-style HUD with Japanese captions), the LCARS theme (the pastel
 // elbows and capsules of 90s TV starship consoles), the galactic theme
 // (the vector targeting computers of 70s space-opera films) or the mech
-// theme (the house look of the other projects' apps and HUDs: graphite
+// theme (the house look of the other projects' apps and HUDs on black:
 // panels with 45° cuts, orange livery, hazard stripes, a stroke font); all
 // but the first Tab5 only. New themes go at the end: the board stores the
 // value

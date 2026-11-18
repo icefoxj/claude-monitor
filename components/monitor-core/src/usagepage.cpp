@@ -229,7 +229,7 @@ namespace {
 // One theme's stripe in the switch, at `percent` of its brightness: the
 // classic's grey with a green dot, the anime's orange with a hexagon, the
 // LCARS lilac with a peach bar and a black cut, the galactic yellow reticle,
-// the mech graphite with an orange lamp over hazard stripes
+// the mech black with an orange lamp over hazard stripes
 void themeEmblem(LovyanGFX& g, Theme t, int x, int y, int w, int h, int percent){
     auto c = [&](uint16_t color){ return glyphs::shade(color, percent); };
     const float cx = x + w * 0.5f, cy = y + h * 0.5f;
